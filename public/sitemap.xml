@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+
+  <!-- Homepage / Landing page -->
+  <url>
+    <loc>https://myregister.co.ke/</loc>
+    <lastmod>2025-05-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en-KE" href="https://myregister.co.ke/"/>
+    <image:image>
+      <image:loc>https://myregister.co.ke/og-image.png</image:loc>
+      <image:title>MyRegister – Kenya's School Register Platform</image:title>
+      <image:caption>Digital attendance, SMS parent notifications, CBC analytics — free for Kenyan schools</image:caption>
+    </image:image>
+  </url>
+
+  <!-- Sign Up -->
+  <url>
+    <loc>https://myregister.co.ke/signup</loc>
+    <lastmod>2025-05-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Login -->
+  <url>
+    <loc>https://myregister.co.ke/login</loc>
+    <lastmod>2025-05-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+</urlset>

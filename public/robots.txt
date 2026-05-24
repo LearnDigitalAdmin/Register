@@ -1,0 +1,36 @@
+# MyRegister – Kenya School Register Platform
+# Built by Samuhia Businesses / Cogvana
+# https://myregister.co.ke
+
+# ── Allow all crawlers ──────────────────────────────────────────────────────
+
+User-agent: *
+
+# Allow full indexing of public-facing pages
+Allow: /
+Allow: /index.html
+Allow: /screenshots/
+Allow: /icons/
+Allow: /og-image.png
+Allow: /apple-touch-icon.png
+
+# Block authenticated app pages (no value to crawlers, require login)
+Disallow: /app
+Disallow: /app/
+
+# Block auth pages (low SEO value, these redirect anyway)
+# Note: /login and /signup are kept crawlable so Google can find the CTA
+# Disallow: /login
+# Disallow: /signup
+
+# Block assets that aren't helpful to index
+Disallow: /src/
+Disallow: *.tsx$
+Disallow: *.ts$
+Disallow: /node_modules/
+
+# ── Crawl-delay for polite bots ─────────────────────────────────────────────
+Crawl-delay: 1
+
+# ── Sitemap ─────────────────────────────────────────────────────────────────
+Sitemap: https://myregister.co.ke/sitemap.xml

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en-KE">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>You're Offline – MyRegister</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Sora', system-ui, sans-serif;
+      background: #0d1117;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      max-width: 400px;
+      width: 100%;
+    }
+    .icon {
+      font-size: 64px;
+      margin-bottom: 24px;
+      display: block;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+    }
+    h1 span { color: #00c896; }
+    p {
+      font-size: 15px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.7;
+      margin-bottom: 32px;
+    }
+    .tips {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 20px;
+      text-align: left;
+      margin-bottom: 28px;
+    }
+    .tips h3 {
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.35);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 14px;
+    }
+    .tip {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+    .tip:last-child { margin-bottom: 0; }
+    .tip-icon { flex-shrink: 0; font-size: 16px; }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: #00c896;
+      color: #0d1117;
+      border: none;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .status {
+      margin-top: 16px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.25);
+    }
+    .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #e84545;
+      margin-right: 6px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="icon">📡</span>
+    <h1>my<span>register</span></h1>
+    <p>You're offline. Check your internet connection and try again — your data is safe and will sync automatically when you're back online.</p>
+
+    <div class="tips">
+      <h3>While you wait</h3>
+      <div class="tip">
+        <span class="tip-icon">📋</span>
+        <span>You can still view registers and student lists if they were loaded before you went offline.</span>
+      </div>
+      <div class="tip">
+        <span class="tip-icon">✏️</span>
+        <span>Attendance marks made offline will sync to Firestore automatically when your connection returns.</span>
+      </div>
+      <div class="tip">
+        <span class="tip-icon">📲</span>
+        <span>SMS messages require an active connection to send via M-Pesa.</span>
+      </div>
+    </div>
+
+    <button onclick="tryReconnect()">Try Again</button>
+
+    <div class="status">
+      <span class="dot"></span>No internet connection detected
+    </div>
+  </div>
+
+  <script>
+    function tryReconnect() {
+      if (navigator.onLine) {
+        window.location.href = '/';
+      } else {
+        window.location.reload();
+      }
+    }
+
+    // Auto-redirect when connection returns
+    window.addEventListener('online', () => {
+      window.location.href = '/';
+    });
+  </script>
+</body>
+</html>

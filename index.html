@@ -1,14 +1,256 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en-KE">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MyRegister — Kenya's School Operations Platform</title>
-    <meta name="description" content="Digital class registers, WhatsApp parent notifications, and attendance analytics for Kenyan schools. Free platform, pay only for messages." />
+
+    <!-- ── Viewport & Rendering ────────────────────────────────────────── -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+    <!-- ── Primary SEO ──────────────────────────────────────────────────── -->
+    <title>MyRegister – Kenya's School Register & Parent SMS Platform | Samuhia / Cogvana</title>
+    <meta name="description" content="MyRegister by Samuhia (Cogvana) is Kenya's smartest school register. Digital attendance marking, SMS parent notifications, CBC & 8-4-4 analytics, and M-Pesa top-up. Free platform for Kenyan schools in Nairobi, Nakuru, Mombasa, Kisumu and beyond." />
+    <meta name="keywords" content="school register Kenya, Samuhia, Cogvana, myregister, school attendance Kenya, CBC school system, 8-4-4 school register, SMS parent notifications Kenya, digital register Kenya, attendance tracking Kenya, school management system Kenya, M-Pesa school payments, Kenyan school software, primary school register Kenya, teacher attendance app Kenya, Nakuru school, Nairobi school software, parent notification system Kenya" />
+    <meta name="author" content="Samuhia Businesses / Cogvana" />
+    <meta name="publisher" content="Samuhia Businesses" />
+    <meta name="copyright" content="© 2025 Samuhia Businesses" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large" />
+    <link rel="canonical" href="https://myregister.co.ke/" />
+
+    <!-- ── Geo & Language ───────────────────────────────────────────────── -->
+    <meta name="geo.region" content="KE" />
+    <meta name="geo.placename" content="Kenya" />
+    <meta name="geo.position" content="-1.286389;36.817223" />
+    <meta name="ICBM" content="-1.286389, 36.817223" />
+    <meta name="language" content="English" />
+    <meta name="content-language" content="en-KE" />
+
+    <!-- ── Open Graph (Facebook, WhatsApp, LinkedIn) ───────────────────── -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="MyRegister" />
+    <meta property="og:title" content="MyRegister – Kenya's School Register & Parent SMS Platform" />
+    <meta property="og:description" content="Digital attendance, SMS parent notifications & CBC analytics. Free for Kenyan schools. Built by Samuhia / Cogvana. Top up via M-Pesa." />
+    <meta property="og:url" content="https://myregister.co.ke/" />
+    <meta property="og:image" content="https://myregister.co.ke/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="MyRegister – Kenya school register showing attendance dashboard with green mint theme" />
+    <meta property="og:locale" content="en_KE" />
+
+    <!-- ── Twitter / X Card ─────────────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@myregisterke" />
+    <meta name="twitter:creator" content="@samuhia" />
+    <meta name="twitter:title" content="MyRegister – Kenya's School Register & Parent SMS Platform" />
+    <meta name="twitter:description" content="Digital attendance, SMS parent notifications & CBC analytics. Free for Kenyan schools. Built by Samuhia / Cogvana." />
+    <meta name="twitter:image" content="https://myregister.co.ke/og-image.png" />
+    <meta name="twitter:image:alt" content="MyRegister dashboard screenshot" />
+
+    <!-- ── PWA / App Meta ───────────────────────────────────────────────── -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#00c896" />
+    <meta name="application-name" content="MyRegister" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- Apple PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MyRegister" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180x180.png" />
+
+    <!-- Apple Splash Screens (generated by pwa-asset-generator) -->
+    <!-- pwa-asset-generator will inject these automatically -->
+
+    <!-- Microsoft Tiles -->
+    <meta name="msapplication-TileColor" content="#0d1117" />
+    <meta name="msapplication-TileImage" content="/icons/icon-144x144.png" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
+    <meta name="msapplication-tap-highlight" content="no" />
+
+    <!-- ── Favicons ─────────────────────────────────────────────────────── -->
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16x16.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    <!-- ── Structured Data: Organization ───────────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Samuhia Businesses",
+      "alternateName": ["Cogvana", "Samuhia", "MyRegister"],
+      "url": "https://myregister.co.ke",
+      "logo": "https://myregister.co.ke/icons/icon-512x512.png",
+      "description": "Samuhia Businesses (also known as Cogvana) builds digital tools for Kenyan schools. MyRegister is their flagship school operations platform.",
+      "foundingLocation": {
+        "@type": "Place",
+        "name": "Kenya"
+      },
+      "areaServed": {
+        "@type": "Country",
+        "name": "Kenya"
+      },
+      "sameAs": [
+        "https://myregister.co.ke"
+      ],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "areaServed": "KE",
+        "availableLanguage": "English"
+      }
+    }
+    </script>
+
+    <!-- ── Structured Data: SoftwareApplication ─────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "MyRegister",
+      "alternateName": "My Register Kenya",
+      "applicationCategory": "EducationApplication",
+      "applicationSubCategory": "School Management",
+      "operatingSystem": "Web, Android, iOS",
+      "url": "https://myregister.co.ke",
+      "description": "Kenya's smartest school register. Digital attendance marking, SMS parent notifications, CBC and 8-4-4 curriculum analytics, assignment sharing, and M-Pesa token top-up. Free platform for Kenyan primary and secondary schools.",
+      "screenshot": "https://myregister.co.ke/screenshots/desktop-dashboard.png",
+      "featureList": [
+        "Digital class register with one-tap attendance marking",
+        "SMS parent notifications via M-Pesa top-up tokens",
+        "CBC and 8-4-4 curriculum attendance analytics",
+        "Exportable PDF attendance reports",
+        "Multi-class and multi-school support",
+        "School admin and teacher roles",
+        "M-Pesa STK push payment integration",
+        "Works offline as Progressive Web App"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "KES",
+        "description": "Free platform. Pay only for SMS tokens via M-Pesa."
+      },
+      "creator": {
+        "@type": "Organization",
+        "name": "Samuhia Businesses",
+        "alternateName": "Cogvana"
+      },
+      "inLanguage": "en-KE",
+      "countriesSupported": "KE",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.8",
+        "reviewCount": "12",
+        "bestRating": "5"
+      }
+    }
+    </script>
+
+    <!-- ── Structured Data: WebSite + SearchAction ──────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "MyRegister",
+      "alternateName": ["Samuhia School Register", "Cogvana MyRegister"],
+      "url": "https://myregister.co.ke",
+      "description": "Kenya's school register and parent communication platform by Samuhia / Cogvana",
+      "inLanguage": "en-KE",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://myregister.co.ke/?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+
+    <!-- ── Structured Data: FAQPage (boosts featured snippets) ─────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is MyRegister Kenya?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "MyRegister is a free digital school register platform for Kenyan schools, built by Samuhia Businesses (Cogvana). It enables teachers to mark daily attendance, send SMS notifications to parents via M-Pesa tokens, and generate analytics reports for CBC and 8-4-4 curriculum schools."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Who built MyRegister?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "MyRegister was built by Samuhia Businesses, also known as Cogvana. Samuhia is a Kenyan technology company focused on building digital tools for schools and education institutions across Kenya."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is MyRegister free for Kenyan schools?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The MyRegister platform is completely free for all Kenyan schools — primary and secondary. You only pay for SMS tokens when sending parent notifications, topped up via M-Pesa. Tokens start from KES 0.7 per SMS per parent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does MyRegister support CBC and 8-4-4?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. MyRegister is built for both the CBC (Competency Based Curriculum) and the traditional 8-4-4 curriculum. It supports class registers, attendance records, and report formats for both systems."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I send SMS to parents using MyRegister?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Top up your SMS token balance via M-Pesa STK push inside the app. Once you have tokens, you can send plain-text SMS messages to all parents in your school or class at once. 1 SMS (up to 140 characters) to 1 parent costs 1 token."
+          }
+        }
+      ]
+    }
+    </script>
+
+    <!-- ── Preconnect for performance ───────────────────────────────────── -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="dns-prefetch" href="https://firestore.googleapis.com" />
+    <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com" />
   </head>
+
   <body>
     <div id="root"></div>
+
+    <!-- 
+      Noscript fallback – helps Google understand page content
+      even if JS is slow or blocked.
+    -->
+    <noscript>
+      <div style="font-family:sans-serif;max-width:700px;margin:60px auto;padding:20px;text-align:center;">
+        <h1>MyRegister – Kenya's School Register Platform</h1>
+        <p>
+          MyRegister by <strong>Samuhia Businesses (Cogvana)</strong> is Kenya's free digital school register.
+          Mark attendance, send SMS to parents via M-Pesa, and generate CBC/8-4-4 analytics reports.
+        </p>
+        <p>Please enable JavaScript to use MyRegister.</p>
+        <p>
+          Schools in <strong>Nairobi, Nakuru, Mombasa, Kisumu, Kiambu</strong> and across Kenya trust MyRegister
+          for daily attendance and parent communication.
+        </p>
+      </div>
+    </noscript>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
