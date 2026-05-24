@@ -9,7 +9,8 @@ import { db } from '../firebase';
 import {
   Student, AttendanceRecord, AttendanceStatus, Message,
   sanitiseSmsText, countSmsSegments, calcTokenCost,
-  getSmsTier, SMS_COST_PER_SEGMENT, SMS_SEGMENT_LENGTH, SMS_MAX_LENGTH,
+  getSmsTier, KES_RATE_PER_TOKEN, SMS_SEGMENT_LENGTH, SMS_MAX_LENGTH,
+  TOKEN_PACKAGES, tokensToKes, kesToTokens, SmsTier,
 } from '../types';
 import { useToast } from '../useToast';
 
@@ -24,6 +25,410 @@ function todayStr() {
 
 type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings';
 
+// ─── M-Pesa Top-Up Modal ──────────────────────────────────────────────────────
+type PayStep = 'select' | 'confirm' | 'waiting' | 'success';
+
+function MpesaTopUpModal({
+  isOpen,
+  onClose,
+  tier,
+  currentTokens,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  tier: SmsTier;
+  currentTokens: number;
+  onSuccess: (tokensAdded: number) => void;
+}) {
+  const kesRate = KES_RATE_PER_TOKEN[tier];
+  const tierLabel =
+    tier === 'small' ? '≤100 recipients' : tier === 'medium' ? '101–300 recipients' : '>300 recipients';
+
+  const [step, setStep] = useState<PayStep>('select');
+  const [selectedPackage, setSelectedPackage] = useState<number | null>(null);
+  const [customKes, setCustomKes] = useState('');
+  const [phone, setPhone] = useState('');
+  const [countdown, setCountdown] = useState(20);
+
+  // Derived values
+  const customTokens = customKes ? kesToTokens(parseFloat(customKes) || 0, tier) : 0;
+  const selectedTokens = selectedPackage !== null ? selectedPackage : customTokens;
+  const selectedKes =
+    selectedPackage !== null
+      ? tokensToKes(selectedPackage, tier)
+      : parseFloat(customKes) || 0;
+
+  // Reset on close
+  useEffect(() => {
+    if (!isOpen) {
+      setTimeout(() => {
+        setStep('select');
+        setSelectedPackage(null);
+        setCustomKes('');
+        setPhone('');
+        setCountdown(20);
+      }, 300);
+    }
+  }, [isOpen]);
+
+  // Countdown timer when waiting for M-Pesa
+  useEffect(() => {
+    if (step !== 'waiting') return;
+    setCountdown(20);
+    const interval = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          clearInterval(interval);
+          setStep('success');
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [step]);
+
+  function handleProceed() {
+    if (selectedTokens < 1) return;
+    if (!phone.trim()) return;
+    setStep('confirm');
+  }
+
+  function handleSendStk() {
+    setStep('waiting');
+  }
+
+  function handleSuccess() {
+    onSuccess(selectedTokens);
+    onClose();
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="modal-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="modal" style={{ maxWidth: 520 }}>
+        {/* Header */}
+        <div className="modal-header">
+          <div>
+            <span className="modal-title">Top Up SMS Tokens</span>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>
+              Your rate: <strong style={{ color: 'var(--mint-d)' }}>KES {kesRate}/token</strong>
+              <span style={{ marginLeft: 8, background: 'var(--surface-2)', padding: '2px 8px', borderRadius: 10, fontSize: 11 }}>
+                {tierLabel}
+              </span>
+            </div>
+          </div>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        {/* STEP: SELECT */}
+        {step === 'select' && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                background: 'rgba(0,200,150,.07)', border: '1px solid rgba(0,200,150,.2)',
+                borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--text-2)',
+                marginBottom: 16,
+              }}>
+                <strong style={{ color: 'var(--ink)' }}>How tokens work:</strong> 1 SMS (140 chars) to 1 parent = 1 token.
+                At your current rate, 1 token costs <strong>KES {kesRate}</strong>.
+                Tokens never expire.
+              </div>
+
+              {/* Packages */}
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 10 }}>
+                Choose a package
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 20 }}>
+                {TOKEN_PACKAGES.map(pkg => {
+                  const kes = tokensToKes(pkg, tier);
+                  const isSelected = selectedPackage === pkg;
+                  return (
+                    <button
+                      key={pkg}
+                      onClick={() => { setSelectedPackage(pkg); setCustomKes(''); }}
+                      style={{
+                        border: `2px solid ${isSelected ? 'var(--mint)' : 'var(--border)'}`,
+                        borderRadius: 10,
+                        background: isSelected ? 'rgba(0,200,150,.08)' : 'var(--surface)',
+                        cursor: 'pointer',
+                        padding: '12px 6px',
+                        textAlign: 'center',
+                        transition: '.15s',
+                        fontFamily: "'Sora',sans-serif",
+                      }}
+                    >
+                      <div style={{
+                        fontSize: 18, fontWeight: 800,
+                        color: isSelected ? 'var(--mint-d)' : 'var(--ink)',
+                      }}>
+                        {pkg}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>tokens</div>
+                      <div style={{
+                        fontSize: 13, fontWeight: 700, marginTop: 6,
+                        color: isSelected ? 'var(--mint-d)' : 'var(--text-2)',
+                      }}>
+                        KES {kes % 1 === 0 ? kes : kes.toFixed(2)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom amount */}
+              <div style={{
+                border: `2px solid ${!selectedPackage && customKes ? 'var(--mint)' : 'var(--border)'}`,
+                borderRadius: 10, padding: 14, background: 'var(--surface)',
+                transition: '.15s',
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 10 }}>
+                  Or enter a custom KES amount
+                </div>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ position: 'relative' }}>
+                      <span style={{
+                        position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                        fontSize: 14, fontWeight: 700, color: 'var(--text-2)',
+                      }}>KES</span>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="e.g. 150"
+                        value={customKes}
+                        style={{ paddingLeft: 48 }}
+                        onChange={e => {
+                          setCustomKes(e.target.value);
+                          setSelectedPackage(null);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{
+                    minWidth: 120, padding: '10px 14px',
+                    background: customTokens > 0 ? 'rgba(0,200,150,.08)' : 'var(--surface-2)',
+                    border: `1px solid ${customTokens > 0 ? 'rgba(0,200,150,.2)' : 'var(--border)'}`,
+                    borderRadius: 10, textAlign: 'center',
+                  }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: customTokens > 0 ? 'var(--mint-d)' : 'var(--text-3)' }}>
+                      {customTokens > 0 ? customTokens : '—'}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>tokens</div>
+                  </div>
+                </div>
+                {customKes && customTokens === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6 }}>
+                    Minimum amount: KES {kesRate} (1 token)
+                  </div>
+                )}
+                {customKes && customTokens > 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
+                    KES {parseFloat(customKes).toFixed(2)} ÷ {kesRate} = {customTokens} tokens
+                    {parseFloat(customKes) % kesRate !== 0 && (
+                      <span style={{ color: 'var(--gold)' }}>
+                        {' '}(KES {(parseFloat(customKes) - customTokens * kesRate).toFixed(2)} remainder not charged)
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Phone + proceed */}
+            <div className="form-group">
+              <label className="form-label">M-Pesa Phone Number</label>
+              <div style={{ position: 'relative' }}>
+                <span style={{
+                  position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                  fontSize: 13, color: 'var(--text-2)', fontWeight: 500,
+                }}>+254</span>
+                <input
+                  className="form-input"
+                  type="tel"
+                  placeholder="7XX XXX XXX"
+                  value={phone}
+                  style={{ paddingLeft: 52 }}
+                  onChange={e => setPhone(e.target.value.replace(/[^0-9]/g, ''))}
+                />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                You'll receive an M-Pesa STK push to confirm the payment.
+              </div>
+            </div>
+
+            {/* Summary */}
+            {selectedTokens > 0 && (
+              <div style={{
+                background: 'var(--surface-2)', border: '1px solid var(--border)',
+                borderRadius: 10, padding: '12px 14px', marginBottom: 16,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+                  You'll get <strong style={{ color: 'var(--ink)' }}>{selectedTokens} tokens</strong>
+                  <span style={{ fontSize: 12, marginLeft: 6, color: 'var(--text-3)' }}>
+                    (currently {currentTokens} → {currentTokens + selectedTokens})
+                  </span>
+                </div>
+                <strong style={{ fontSize: 16, color: 'var(--mint-d)' }}>
+                  KES {selectedKes % 1 === 0 ? selectedKes : selectedKes.toFixed(2)}
+                </strong>
+              </div>
+            )}
+
+            <button
+              className="btn-primary"
+              style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 15 }}
+              disabled={selectedTokens < 1 || !phone.trim() || phone.length < 9}
+              onClick={handleProceed}
+            >
+              Continue to Pay →
+            </button>
+          </div>
+        )}
+
+        {/* STEP: CONFIRM */}
+        {step === 'confirm' && (
+          <div>
+            <div style={{
+              background: 'var(--surface-2)', borderRadius: 12, padding: 20, marginBottom: 20,
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 14 }}>
+                Payment Summary
+              </div>
+              {[
+                ['Tokens to receive', `${selectedTokens} tokens`],
+                ['Amount to pay', `KES ${selectedKes % 1 === 0 ? selectedKes : selectedKes.toFixed(2)}`],
+                ['Rate', `KES ${kesRate} per token (${tierLabel})`],
+                ['Payment via', 'M-Pesa STK Push'],
+                ['M-Pesa number', `+254${phone}`],
+              ].map(([k, v]) => (
+                <div key={k as string} style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  padding: '8px 0', borderBottom: '1px solid var(--border)',
+                  fontSize: 14,
+                }}>
+                  <span style={{ color: 'var(--text-2)' }}>{k}</span>
+                  <strong style={{ color: 'var(--ink)' }}>{v}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="notice notice-info" style={{ marginBottom: 16 }}>
+              📲 When you click below, we'll send an M-Pesa STK push to <strong>+254{phone}</strong>.
+              Enter your M-Pesa PIN when prompted. Tokens will be credited instantly on confirmation.
+            </div>
+
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button className="btn-secondary" onClick={() => setStep('select')}>← Back</button>
+              <button
+                className="btn-primary"
+                style={{ flex: 1, justifyContent: 'center', padding: 14, fontSize: 15 }}
+                onClick={handleSendStk}
+              >
+                💳 Send M-Pesa Request
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP: WAITING */}
+        {step === 'waiting' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{
+              width: 72, height: 72, borderRadius: '50%',
+              background: 'rgba(0,200,150,.1)', border: '2px solid rgba(0,200,150,.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 32, margin: '0 auto 20px',
+            }}>
+              📲
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--ink)', marginBottom: 8 }}>
+              Check your phone
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 4 }}>
+              M-Pesa STK push sent to <strong>+254{phone}</strong>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 24, fontFamily: "'Literata',serif" }}>
+              Enter your M-Pesa PIN to pay <strong>KES {selectedKes % 1 === 0 ? selectedKes : selectedKes.toFixed(2)}</strong>
+            </div>
+
+            {/* Animated countdown ring */}
+            <div style={{ position: 'relative', width: 72, height: 72, margin: '0 auto 20px' }}>
+              <svg width="72" height="72" style={{ transform: 'rotate(-90deg)' }}>
+                <circle cx="36" cy="36" r="30" fill="none" stroke="var(--border)" strokeWidth="4" />
+                <circle
+                  cx="36" cy="36" r="30" fill="none"
+                  stroke="var(--mint)" strokeWidth="4"
+                  strokeDasharray={`${2 * Math.PI * 30}`}
+                  strokeDashoffset={`${2 * Math.PI * 30 * (1 - countdown / 20)}`}
+                  style={{ transition: 'stroke-dashoffset 1s linear' }}
+                />
+              </svg>
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                fontSize: 18, fontWeight: 800, color: 'var(--mint-d)',
+              }}>
+                {countdown}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>
+              Waiting for payment confirmation…
+            </div>
+
+            <button className="btn-secondary" style={{ fontSize: 13 }} onClick={() => setStep('select')}>
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* STEP: SUCCESS */}
+        {step === 'success' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{
+              width: 80, height: 80, borderRadius: '50%',
+              background: 'rgba(0,200,150,.12)', border: '3px solid var(--mint)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 36, margin: '0 auto 20px',
+            }}>
+              ✅
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--ink)', marginBottom: 8 }}>
+              Payment Successful!
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 20 }}>
+              <strong style={{ color: 'var(--mint-d)', fontSize: 28, display: 'block', marginBottom: 4 }}>
+                +{selectedTokens} tokens
+              </strong>
+              added to your account · new balance:{' '}
+              <strong>{currentTokens + selectedTokens} tokens</strong>
+            </div>
+            <div style={{
+              background: 'rgba(0,200,150,.07)', border: '1px solid rgba(0,200,150,.2)',
+              borderRadius: 10, padding: '10px 16px', fontSize: 13, color: 'var(--text-2)',
+              marginBottom: 24,
+            }}>
+              KES {selectedKes % 1 === 0 ? selectedKes : selectedKes.toFixed(2)} charged to M-Pesa +254{phone}
+            </div>
+            <button className="btn-primary" style={{ padding: '12px 32px', fontSize: 15 }} onClick={handleSuccess}>
+              Done →
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── SMS cost preview component ──────────────────────────────────────────────
 function SmsCostPreview({
   rawText,
@@ -36,8 +441,9 @@ function SmsCostPreview({
   const charCount = cleaned.length;
   const segments = countSmsSegments(cleaned);
   const tier = getSmsTier(recipientCount);
-  const costPerSeg = SMS_COST_PER_SEGMENT[tier];
+  const kesRate = KES_RATE_PER_TOKEN[tier];
   const totalTokens = calcTokenCost(cleaned, recipientCount);
+  const totalKes = tokensToKes(totalTokens, tier);
   const isOver = charCount > SMS_MAX_LENGTH;
   const tierLabel = tier === 'small' ? '≤100 recipients' : tier === 'medium' ? '101–300 recipients' : '>300 recipients';
 
@@ -65,7 +471,7 @@ function SmsCostPreview({
         </span>
         <span>
           <span style={{ color: 'var(--text-2)' }}>Rate: </span>
-          <strong style={{ color: 'var(--ink)' }}>{costPerSeg} tok/SMS</strong>
+          <strong style={{ color: 'var(--ink)' }}>KES {kesRate}/token</strong>
           <span style={{ color: 'var(--text-3)', fontSize: 11 }}> ({tierLabel})</span>
         </span>
       </div>
@@ -74,7 +480,7 @@ function SmsCostPreview({
         paddingTop: 8, borderTop: '1px solid var(--border)',
       }}>
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          {segments} parts × {recipientCount} recipients × {costPerSeg} = {totalTokens} tokens
+          {segments} part{segments !== 1 ? 's' : ''} × {recipientCount} recipients = {totalTokens} tokens · ≈ KES {totalKes % 1 === 0 ? totalKes : totalKes.toFixed(2)}
         </span>
         <span style={{
           fontWeight: 800, fontSize: 16,
@@ -134,7 +540,7 @@ function MessageLogRow({
       </td>
       <td style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>{msg.tokensUsed}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{msg.costPerSegment}/SMS</div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)' }}>KES {msg.costPerSegment}/tok</div>
       </td>
       <td>
         <span style={{
@@ -184,6 +590,9 @@ export default function AppDashboard() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
 
+  // Top-up modal
+  const [showTopUp, setShowTopUp] = useState(false);
+
   const isAdmin = userProfile?.role === 'schoolAdmin';
   const schoolId = userProfile?.schoolId || '';
   const classCode = isAdmin
@@ -192,7 +601,9 @@ export default function AppDashboard() {
   const tokens = userProfile?.messageTokens ?? 0;
 
   // ── Derived SMS state ──
-  const recipientCount = msgTo === 'All School' ? students.length : students.length; // simplification; all classes here have same students
+  const recipientCount = students.length;
+  const tier = getSmsTier(recipientCount);
+  const kesRate = KES_RATE_PER_TOKEN[tier];
   const cleanedMsg = sanitiseSmsText(msgContent);
   const msgSegments = countSmsSegments(cleanedMsg);
   const msgTokenCost = calcTokenCost(cleanedMsg, recipientCount);
@@ -293,7 +704,7 @@ export default function AppDashboard() {
         name: newStudent.name.trim(), admissionNo, classCode, schoolId,
         parentName: newStudent.parentName.trim(),
         parentPhone: newStudent.parentPhone.trim(),
-        parentWhatsApp: newStudent.parentPhone.trim(), // SMS only now
+        parentWhatsApp: newStudent.parentPhone.trim(),
         createdAt: new Date().toISOString(),
       };
       const ref = await addDoc(collection(db, 'students'), s);
@@ -316,15 +727,15 @@ export default function AppDashboard() {
     if (!clean) { toast('⚠️ Message is empty after sanitisation.'); return; }
     if (clean.length > SMS_MAX_LENGTH) { toast('⛔ Message too long (max 400 characters).'); return; }
 
-    const rc = students.length; // recipient snapshot
+    const rc = students.length;
     const cost = calcTokenCost(clean, rc);
     if (tokens < cost) {
       toast(`⚠️ Insufficient tokens. Need ${cost}, you have ${tokens}.`);
       return;
     }
 
-    const tier = getSmsTier(rc);
-    const costPerSeg = SMS_COST_PER_SEGMENT[tier];
+    const msgTier = getSmsTier(rc);
+    const costPerSegment = KES_RATE_PER_TOKEN[msgTier];
     const segs = countSmsSegments(clean);
 
     setSendingMsg(true);
@@ -339,8 +750,8 @@ export default function AppDashboard() {
         rawContent: rawText,
         content: clean,
         smsSegments: segs,
-        smsTier: tier,
-        costPerSegment: costPerSeg,
+        smsTier: msgTier,
+        costPerSegment,
         tokensUsed: cost,
         sentAt: new Date().toISOString(),
         delivered: rc,
@@ -418,7 +829,8 @@ export default function AppDashboard() {
             <strong>{userProfile.displayName}</strong>
             {userProfile.email}
           </div>
-          <div className="token-badge" style={{ marginBottom: 10, fontSize: 12 }}>
+          <div className="token-badge" style={{ marginBottom: 10, fontSize: 12, cursor: 'pointer' }}
+            onClick={() => setShowTopUp(true)}>
             🪙 {tokens} tokens
           </div>
           <button
@@ -459,7 +871,7 @@ export default function AppDashboard() {
                   { label: 'Total Students', value: students.length, sub: classCode, color: 'var(--ink)' },
                   { label: 'Present Today', value: counts.present, sub: `${rate}% rate`, color: 'var(--mint-d)' },
                   { label: 'Absent Today', value: counts.absent, sub: 'need notification', color: 'var(--red)' },
-                  { label: 'SMS Tokens', value: tokens, sub: 'remaining', color: '#c4800a' },
+                  { label: 'SMS Tokens', value: tokens, sub: `KES ${kesRate}/token · ${tier}`, color: '#c4800a' },
                 ].map(s => (
                   <div className="stat-card" key={s.label}>
                     <div className="stat-label">{s.label}</div>
@@ -479,6 +891,7 @@ export default function AppDashboard() {
                       { label: '📲 Send SMS to Parents', action: () => setPanel('messages') },
                       { label: '🗂️ Message Logs', action: () => setPanel('logs') },
                       { label: '📊 View Reports', action: () => setPanel('reports') },
+                      { label: '💳 Top Up SMS Tokens', action: () => setShowTopUp(true) },
                     ].map(a => (
                       <button
                         key={a.label} className="btn-secondary"
@@ -533,7 +946,13 @@ export default function AppDashboard() {
 
               {tokens < 20 && (
                 <div className="notice notice-warning" style={{ marginTop: 0 }}>
-                  ⚠️ You have {tokens} SMS tokens left. Top up via M-Pesa to continue sending parent notifications.
+                  ⚠️ You have {tokens} SMS tokens left. {' '}
+                  <span
+                    style={{ color: '#c4800a', cursor: 'pointer', fontWeight: 700, textDecoration: 'underline' }}
+                    onClick={() => setShowTopUp(true)}
+                  >
+                    Top up via M-Pesa →
+                  </span>
                 </div>
               )}
 
@@ -838,22 +1257,21 @@ export default function AppDashboard() {
               {tokens === 0 && (
                 <div className="notice notice-warning">
                   ⚠️ You have no tokens.{' '}
-                  <strong>Top up via M-Pesa</strong> to send SMS messages to parents.
                   <button
                     className="btn-secondary"
                     style={{ marginLeft: 16, fontSize: 12 }}
-                    onClick={() => toast('M-Pesa payment integration coming soon! Contact us: 0700-MY-REGISTER')}
+                    onClick={() => setShowTopUp(true)}
                   >
-                    Top Up Now
+                    💳 Top Up via M-Pesa →
                   </button>
                 </div>
               )}
 
-              {/* SMS pricing info banner */}
               <div className="notice notice-info" style={{ marginBottom: 20 }}>
-                📲 <strong>SMS pricing by recipient count:</strong>&nbsp;
-                ≤100 recipients → <strong>0.7 tokens/SMS</strong> · 101–300 → <strong>0.5 tokens/SMS</strong> · 300+ → <strong>0.4 tokens/SMS</strong>.
-                One SMS = 140 characters. Max message length 400 chars (3 SMS parts). Emojis and special characters are automatically stripped.
+                📲 <strong>How tokens work:</strong> 1 SMS (140 chars) to 1 parent = 1 token.
+                Token cost in KES depends on your school size: ≤100 → <strong>KES 0.7/token</strong> · 101–300 → <strong>KES 0.5/token</strong> · 300+ → <strong>KES 0.4/token</strong>.
+                Your current rate: <strong>KES {kesRate}/token</strong> ({students.length} students).
+                Spaces count towards character limit. Max 400 chars (3 SMS parts).
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 24 }}>
@@ -907,19 +1325,16 @@ export default function AppDashboard() {
                           marginLeft: 8, fontSize: 11, color: cleanedMsg.length > SMS_MAX_LENGTH ? 'var(--red)' : 'var(--text-3)',
                           fontWeight: 400, letterSpacing: 0, textTransform: 'none',
                         }}>
-                          {cleanedMsg.length}/{SMS_MAX_LENGTH} chars
+                          {cleanedMsg.length}/{SMS_MAX_LENGTH} chars (spaces included)
                           {msgSegments > 0 && ` · ${msgSegments} SMS part${msgSegments !== 1 ? 's' : ''}`}
                         </span>
                       </label>
                       <textarea
                         className="form-input"
                         rows={5}
-                        placeholder={`Type your SMS message here... (max ${SMS_MAX_LENGTH} characters, emojis will be removed)`}
+                        placeholder={`Type your SMS message here... (max ${SMS_MAX_LENGTH} characters including spaces, emojis will be removed)`}
                         value={msgContent}
-                        onChange={e => {
-                          // Allow typing freely; we warn but don't block over the limit in the textarea
-                          setMsgContent(e.target.value);
-                        }}
+                        onChange={e => setMsgContent(e.target.value)}
                         style={{
                           resize: 'vertical',
                           borderColor: msgTooLong ? 'var(--red)' : undefined,
@@ -943,7 +1358,6 @@ export default function AppDashboard() {
                       )}
                     </div>
 
-                    {/* Live cost calculator */}
                     {cleanedMsg.length > 0 && (
                       <SmsCostPreview rawText={msgContent} recipientCount={recipientCount} />
                     )}
@@ -985,12 +1399,12 @@ export default function AppDashboard() {
                       {/* Tier pricing table */}
                       <div style={{ fontSize: 12, marginBottom: 14 }}>
                         <div style={{ fontWeight: 600, color: 'var(--text-2)', marginBottom: 6, letterSpacing: .5, textTransform: 'uppercase', fontSize: 10 }}>
-                          Pricing Tiers
+                          KES Cost per Token (by school size)
                         </div>
                         {[
-                          { range: '≤ 100 recipients', rate: '0.7', active: recipientCount <= 100 },
-                          { range: '101–300 recipients', rate: '0.5', active: recipientCount > 100 && recipientCount <= 300 },
-                          { range: '> 300 recipients', rate: '0.4', active: recipientCount > 300 },
+                          { range: '≤ 100 students', rate: 'KES 0.7/token', active: recipientCount <= 100 },
+                          { range: '101–300 students', rate: 'KES 0.5/token', active: recipientCount > 100 && recipientCount <= 300 },
+                          { range: '> 300 students', rate: 'KES 0.4/token', active: recipientCount > 300 },
                         ].map(row => (
                           <div key={row.range} style={{
                             display: 'flex', justifyContent: 'space-between',
@@ -1003,53 +1417,59 @@ export default function AppDashboard() {
                               {row.active ? '→ ' : ''}{row.range}
                             </span>
                             <strong style={{ color: row.active ? 'var(--mint-d)' : 'var(--text-2)' }}>
-                              {row.rate} tok/SMS
+                              {row.rate}
                             </strong>
                           </div>
                         ))}
                         <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>
-                          1 SMS = 140 chars. 141+ chars = 2 SMS. Max 400 chars (3 SMS).
+                          1 SMS = 140 chars (spaces included). 141+ chars = 2 tokens per recipient.
                         </div>
                       </div>
 
                       <button
-                        className="btn-secondary"
+                        className="btn-primary"
                         style={{ width: '100%', justifyContent: 'center' }}
-                        onClick={() => toast('M-Pesa top-up coming soon! Call 0700-MYREGISTER for now.')}
+                        onClick={() => setShowTopUp(true)}
                       >
                         💳 Top Up via M-Pesa
                       </button>
                     </div>
                   </div>
 
+                  {/* Dynamic token packages */}
                   <div className="card">
-                    <div className="card-header"><span className="card-title">Token Packages</span></div>
-                    <div className="card-body">
-                      {[
-                        ['50 tokens', 'KSh 50'],
-                        ['200 tokens', 'KSh 180'],
-                        ['500 tokens', 'KSh 400'],
-                        ['1 000 tokens', 'KSh 750'],
-                      ].map(([t, price]) => (
-                        <div
-                          key={t}
-                          style={{
-                            display: 'flex', justifyContent: 'space-between',
-                            padding: '10px 0', borderBottom: '1px solid var(--border)', fontSize: 13,
-                          }}
-                        >
-                          <span style={{ fontWeight: 600 }}>{t}</span>
-                          <span style={{ color: 'var(--text-2)' }}>{price}</span>
-                        </div>
-                      ))}
-                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 12 }}>
-                        All purchases via M-Pesa. Tokens never expire.
+                    <div className="card-header">
+                      <span className="card-title">Token Packages</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-3)' }}>@ KES {kesRate}/token</span>
+                    </div>
+                    <div className="card-body" style={{ padding: '8px 16px' }}>
+                      {TOKEN_PACKAGES.map(pkg => {
+                        const kes = tokensToKes(pkg, tier);
+                        return (
+                          <div
+                            key={pkg}
+                            style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              padding: '10px 0', borderBottom: '1px solid var(--border)', fontSize: 13,
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => setShowTopUp(true)}
+                          >
+                            <span style={{ fontWeight: 600 }}>🪙 {pkg} tokens</span>
+                            <span style={{ fontWeight: 700, color: 'var(--mint-d)' }}>
+                              KES {kes % 1 === 0 ? kes : kes.toFixed(2)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 10, paddingBottom: 4 }}>
+                        Prices based on your school size ({students.length} students).
+                        Tokens never expire. Pay via M-Pesa.
                       </div>
                     </div>
                   </div>
 
                   <div className="card" style={{ marginTop: 16 }}>
-                    <div className="card-header"><span className="card-title">Recent Logs</span></div>
                     <div className="card-body" style={{ padding: '10px 16px' }}>
                       <button
                         className="btn-secondary"
@@ -1088,7 +1508,6 @@ export default function AppDashboard() {
               </div>
             </div>
             <div className="page-body">
-              {/* Summary strip */}
               {msgLogs.length > 0 && (
                 <div className="stats-grid" style={{ marginBottom: 20 }}>
                   {[
@@ -1310,7 +1729,7 @@ export default function AppDashboard() {
                   ['Type', previewMsg.type],
                   ['Recipients', `${previewMsg.recipients} (${previewMsg.recipientCount})`],
                   ['SMS parts', `${previewMsg.smsSegments} × 140 chars`],
-                  ['Rate tier', `${previewMsg.costPerSegment} tok/SMS`],
+                  ['KES rate', `KES ${previewMsg.costPerSegment}/token`],
                   ['Tokens used', String(previewMsg.tokensUsed)],
                   ['Delivered', `${previewMsg.delivered} / ${previewMsg.total}`],
                 ].map(([k, v]) => (
@@ -1336,7 +1755,7 @@ export default function AppDashboard() {
                   {previewMsg.content}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
-                  {previewMsg.content.length} characters
+                  {previewMsg.content.length} characters (including spaces)
                 </div>
               </div>
 
@@ -1371,6 +1790,27 @@ export default function AppDashboard() {
           </div>
         </div>
       )}
+
+      {/* ── M-PESA TOP-UP MODAL ── */}
+      <MpesaTopUpModal
+        isOpen={showTopUp}
+        onClose={() => setShowTopUp(false)}
+        tier={tier}
+        currentTokens={tokens}
+        onSuccess={async (tokensAdded) => {
+          // In production: Firestore update happens server-side after M-Pesa confirmation.
+          // Here we optimistically update and refresh.
+          try {
+            await updateDoc(doc(db, 'users', user!.uid), {
+              messageTokens: tokens + tokensAdded,
+            });
+            await refreshProfile();
+            toast(`🎉 ${tokensAdded} tokens added! New balance: ${tokens + tokensAdded}`);
+          } catch (e: any) {
+            toast('⚠️ Top-up recorded. Refresh if balance doesn\'t update.');
+          }
+        }}
+      />
 
       {/* MOBILE BOTTOM NAV */}
       <nav

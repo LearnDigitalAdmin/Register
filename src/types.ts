@@ -9,9 +9,9 @@ export interface UserProfile {
   role: UserRole;
   schoolId: string;
   schoolName: string;
-  classCode?: string; // for teachers
+  classCode?: string;
   createdAt: string;
-  messageTokens: number; // free platform, tokens for messages only
+  messageTokens: number;
 }
 
 export interface School {
@@ -40,7 +40,7 @@ export interface AttendanceRecord {
   studentId: string;
   studentName: string;
   admissionNo: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   classCode: string;
   schoolId: string;
   status: AttendanceStatus;
@@ -59,60 +59,76 @@ export function getSmsTier(recipientCount: number): SmsTier {
   return 'large';
 }
 
-/** Cost per single SMS (1 segment = 140 chars) per recipient */
-export const SMS_COST_PER_SEGMENT: Record<SmsTier, number> = {
-  small: 0.7,   // ≤100 recipients
-  medium: 0.5,  // 101–300 recipients
-  large: 0.4,   // >300 recipients
+/**
+ * KES cost per token by tier.
+ * 1 SMS part (140 chars) per recipient = 1 token.
+ * Token value in KES depends on school size.
+ */
+export const KES_RATE_PER_TOKEN: Record<SmsTier, number> = {
+  small: 0.7,   // ≤100 recipients → 0.7 KES/token
+  medium: 0.5,  // 101–300 recipients → 0.5 KES/token
+  large: 0.4,   // >300 recipients → 0.4 KES/token
 };
 
 export const SMS_SEGMENT_LENGTH = 140;
-export const SMS_MAX_LENGTH = 400; // = 3 segments max
+export const SMS_MAX_LENGTH = 400; // 3 segments max
 
-/** Count how many 140-char segments a message uses (1–3) */
+/** Count how many 140-char segments a message uses */
 export function countSmsSegments(text: string): number {
   const len = text.length;
   if (len === 0) return 0;
   return Math.ceil(len / SMS_SEGMENT_LENGTH);
 }
 
-/** Strip emojis and non-text characters from a message before sending */
+/** Strip emojis and non-text characters */
 export function sanitiseSmsText(raw: string): string {
   return raw
-    // Remove emoji & pictographs
     .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
     .replace(/[\u{2600}-\u{27BF}]/gu, '')
-    .replace(/[\u{FE00}-\u{FE0F}]/gu, '') // variation selectors
-    .replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '') // flags
-    // Remove other non-printable / control characters (keep basic Latin + extended Latin)
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
+    .replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '')
     .replace(/[^\x20-\x7E\u00A0-\u00FF\u0100-\u024F\r\n]/g, '')
-    // Collapse multiple spaces
     .replace(/ {2,}/g, ' ')
     .trim();
 }
 
-/** Calculate total token cost for a send */
+/**
+ * Calculate total token cost.
+ * 1 token = 1 SMS part per recipient (regardless of tier).
+ * Tier only affects KES price of tokens, not how many tokens are used.
+ */
 export function calcTokenCost(cleanedText: string, recipientCount: number): number {
   const segments = countSmsSegments(cleanedText);
-  const tier = getSmsTier(recipientCount);
-  const costPerSegment = SMS_COST_PER_SEGMENT[tier];
-  // tokens = segments × recipients × cost-per-segment
-  // We store tokens as fractional but display rounded to 2dp
-  return Math.ceil(segments * recipientCount * costPerSegment);
+  return segments * recipientCount; // 1 token per SMS part per recipient
 }
+
+/**
+ * Calculate KES price for a given number of tokens at a tier.
+ */
+export function tokensToKes(tokens: number, tier: SmsTier): number {
+  return Math.round(tokens * KES_RATE_PER_TOKEN[tier] * 100) / 100;
+}
+
+/**
+ * Reverse calculation: given KES amount, how many tokens?
+ * Truncated to nearest whole token.
+ */
+export function kesToTokens(kes: number, tier: SmsTier): number {
+  return Math.floor(kes / KES_RATE_PER_TOKEN[tier]);
+}
+
+/** Fixed token package sizes */
+export const TOKEN_PACKAGES = [50, 100, 200, 500, 1000];
 
 export interface Message {
   id: string;
   schoolId: string;
   sentBy: string;
   type: 'attendance' | 'assignment' | 'notice' | 'activity' | 'alert' | 'custom';
-  /** SMS only */
   channel: 'sms';
-  recipients: string; // "All School" | "Grade 7A" etc.
+  recipients: string;
   recipientCount: number;
-  /** Raw content before sanitisation */
   rawContent: string;
-  /** Sanitised content actually sent */
   content: string;
   smsSegments: number;
   smsTier: SmsTier;
@@ -121,7 +137,6 @@ export interface Message {
   sentAt: string;
   delivered: number;
   total: number;
-  /** For log UI */
   status: 'sent' | 'failed' | 'partial';
 }
 
