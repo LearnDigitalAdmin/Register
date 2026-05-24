@@ -7,7 +7,7 @@ export default function Landing() {
     <div style={{ background: 'var(--ink)', color: '#fff', minHeight: '100vh' }}>
       {/* NAV */}
       <nav className="lp-nav">
-        <div className="lp-logo">my<span>register</span></div>
+        <div className="lp-logo">MY<span>REGISTER</span></div>
         <div className="lp-nav-links">
           <a onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}>Features</a>
           <a onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })}>Pricing</a>
@@ -331,7 +331,7 @@ export default function Landing() {
         ))}
       </footer>
       <div style={{ borderTop: '1px solid rgba(255,255,255,.07)', padding: '24px 60px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <p style={{ fontSize: 13, color: 'rgba(255,255,255,.3)' }}>© 2025 MyRegister. Made with love in Kenya.</p>
+        <p style={{ fontSize: 13, color: 'rgba(255,255,255,.3)' }}>© 2025 SAMUHIA BUSINESSES. Made with love in Kenya.</p>
         <p style={{ fontSize: 13, color: 'rgba(255,255,255,.3)' }}>Platform free · Pay only for SMS</p>
       </div>
     </div>

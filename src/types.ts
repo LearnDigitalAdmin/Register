@@ -153,3 +153,5 @@ export interface RegisterDay {
   excused: number;
   total: number;
 }
+
+
