@@ -254,3 +254,4 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
     </div>
   );
 }
+
