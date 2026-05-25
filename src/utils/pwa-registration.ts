@@ -1,15 +1,15 @@
 // src/utils/pwa-registration.ts
-// MyRegister PWA Manager — based on Cogvana Cyber's pattern
+// MyRegister PWA Manager
 // Handles: SW registration, install prompt, updates, persistent storage,
 //          background sync registration, push permission, storage quota.
-
-interface SyncManager {
-  register(tag: string): Promise<void>;
-}
 
 interface PWAInstallPrompt {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+interface SyncManager {
+  register(tag: string): Promise<void>;
 }
 
 class PWAManager {
@@ -58,7 +58,7 @@ class PWAManager {
         window.location.reload();
       });
 
-      // Listen for messages from SW (background sync triggers, etc.)
+      // Listen for messages from SW
       navigator.serviceWorker.addEventListener('message', (event) => {
         this.handleSWMessage(event.data);
       });
@@ -78,7 +78,6 @@ class PWAManager {
         console.log('[PWA] ✅ Storage already persistent');
         return true;
       }
-
       const granted = await navigator.storage.persist();
       console.log(`[PWA] ${granted ? '✅' : '⚠️'} Persistent storage ${granted ? 'granted' : 'denied'}`);
       return granted;
@@ -95,12 +94,10 @@ class PWAManager {
     if (!('storage' in navigator) || !('estimate' in navigator.storage)) {
       return { usage: 0, quota: 0, percentUsed: 0, available: 0 };
     }
-
     try {
       const { usage = 0, quota = 0 } = await navigator.storage.estimate();
       const percentUsed = quota > 0 ? (usage / quota) * 100 : 0;
       const available = quota - usage;
-
       console.log(`[PWA] 📊 Storage: ${(usage / 1024 / 1024).toFixed(1)} MB used of ${(quota / 1024 / 1024).toFixed(0)} MB (${percentUsed.toFixed(1)}%)`);
       return { usage, quota, percentUsed, available };
     } catch (error) {
@@ -130,7 +127,6 @@ class PWAManager {
       console.log('[PWA] ⚠️ No install prompt available');
       return false;
     }
-
     try {
       await this.deferredPrompt.prompt();
       const { outcome } = await this.deferredPrompt.userChoice;
@@ -151,6 +147,10 @@ class PWAManager {
     return standalone || fullscreen || minimalUI || iosStandalone;
   }
 
+  hasInstallPrompt(): boolean {
+    return this.deferredPrompt !== null;
+  }
+
   // ── Push Notifications ────────────────────────────────────────────────────
   async requestPushPermission(): Promise<NotificationPermission> {
     if (!('Notification' in window)) return 'denied';
@@ -166,7 +166,6 @@ class PWAManager {
       console.log('[PWA] ⚠️ Background Sync not supported');
       return false;
     }
-
     try {
       await (this.registration.sync as SyncManager).register(tag);
       console.log(`[PWA] ✅ Background sync registered: ${tag}`);
@@ -200,7 +199,7 @@ class PWAManager {
   async isPrivateMode(): Promise<boolean> {
     try {
       const { quota = 0 } = await navigator.storage.estimate();
-      return quota < 120_000_000; // private mode typically < 120 MB
+      return quota < 120_000_000;
     } catch {
       return false;
     }
@@ -256,5 +255,5 @@ class PWAManager {
   }
 }
 
-// Singleton
+// Singleton — NO auto-init on import. main.tsx calls initialize() explicitly.
 export const pwaManager = new PWAManager();

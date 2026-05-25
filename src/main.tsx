@@ -1,16 +1,14 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App.tsx';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import './index.css';
+import App from './App.tsx';
 import { pwaManager } from './utils/pwa-registration';
 
-// ── PWA: initialise service worker, install prompt, storage ──────────────────
-// Mirrors the Cogvana Cyber pattern exactly.
-// pwaManager.initialize() is non-blocking — runs in the background.
+// Single PWA init — pwaManager handles SW registration, install prompt, storage
 pwaManager.initialize().catch(console.error);
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
     <App />
-  </React.StrictMode>,
+  </StrictMode>,
 );

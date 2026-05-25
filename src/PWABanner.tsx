@@ -1,13 +1,14 @@
 /**
  * PWABanner.tsx
- * Add <PWABanner /> anywhere in your App.tsx (outside the router is fine).
+ * Add <PWABanner /> inside <AuthProvider> in App.tsx (outside Routes is fine).
+ *
  * Shows:
  *  - "Add to Home Screen" banner when installable
  *  - "Update available" toast when a new SW is waiting
  *  - "You're offline" bar at the top when connection drops
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { usePWA } from './usePWA';
 
 export default function PWABanner() {
@@ -20,7 +21,8 @@ export default function PWABanner() {
     applyUpdate,
   } = usePWA();
 
-  // Optional: log install status for analytics
+  const [dismissed, setDismissed] = useState(false);
+
   useEffect(() => {
     if (isInstalled) {
       console.log('[PWA] Running as installed app');
@@ -81,7 +83,7 @@ export default function PWABanner() {
       )}
 
       {/* ── Install Banner ────────────────────────────────────────────── */}
-      {isInstallable && !isInstalled && (
+      {isInstallable && !isInstalled && !dismissed && (
         <div style={{
           position: 'fixed', bottom: 88, right: 20,
           background: '#1e2730', border: '1px solid rgba(0,200,150,.25)',
@@ -119,13 +121,7 @@ export default function PWABanner() {
               📲 Install App
             </button>
             <button
-              onClick={() => {
-                // Dismiss — a real app would store this in localStorage
-                // to not show again. Since we can't use localStorage in
-                // artifacts, handle this in your app with useState.
-                const el = document.getElementById('pwa-install-banner');
-                if (el) el.style.display = 'none';
-              }}
+              onClick={() => setDismissed(true)}
               style={{
                 background: 'rgba(255,255,255,.06)', color: 'rgba(255,255,255,.5)',
                 border: '1px solid rgba(255,255,255,.08)',
