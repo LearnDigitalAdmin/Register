@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import {
@@ -8,7 +8,7 @@ import {
 import { db } from '../firebase';
 import {
   Student, AttendanceStatus, Message,
-  sanitiseSmsText, 
+  sanitiseSmsText,
   getSmsTier, KES_RATE_PER_TOKEN,
   TOKEN_PACKAGES, tokensToKes,
 } from '../types';
@@ -63,7 +63,6 @@ function SmsComposeBox({
           </span>
         </label>
 
-        {/* Body-only textarea — user types here, no header/footer interference */}
         <textarea
           className="form-input"
           rows={4}
@@ -79,7 +78,6 @@ function SmsComposeBox({
           }}
         />
 
-        {/* Legend */}
         {body.trim().length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
             <span style={{ background: 'rgba(44,111,173,.1)', color: 'var(--blue)', border: '1px solid rgba(44,111,173,.2)', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>
@@ -94,7 +92,6 @@ function SmsComposeBox({
           </div>
         )}
 
-        {/* Read-only full preview */}
         {body.trim().length > 0 && (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 6 }}>
@@ -126,7 +123,6 @@ function SmsComposeBox({
         </div>
       )}
 
-      {/* Cost breakdown */}
       {body.trim() && recipientCount > 0 && (
         <div style={{
           background: 'var(--surface-2)', border: `1px solid ${isOver ? 'rgba(232,69,69,.3)' : 'var(--border)'}`,
@@ -210,6 +206,291 @@ function MessageLogRow({ msg, onResend, onPreview }: {
   );
 }
 
+// ─── Mobile Drawer Nav ────────────────────────────────────────────────────────
+function MobileDrawerNav({
+  panel,
+  setPanel,
+  isAdmin,
+  userProfile,
+  tokens,
+  onTopUp,
+  onSignOut,
+}: {
+  panel: Panel;
+  setPanel: (p: Panel) => void;
+  isAdmin: boolean;
+  userProfile: any;
+  tokens: number;
+  onTopUp: () => void;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  // Close on back-swipe / escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Prevent body scroll when drawer is open
+  useEffect(() => {
+    document.body.style.overflow = open ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [open]);
+
+  const navItems: { id: Panel; icon: string; label: string; adminOnly?: boolean }[] = [
+    { id: 'overview',  icon: '🏠', label: 'Overview' },
+    { id: 'register',  icon: '📋', label: 'Register' },
+    { id: 'students',  icon: '👥', label: 'Students' },
+    { id: 'messages',  icon: '💬', label: 'Send SMS' },
+    { id: 'logs',      icon: '🗂️', label: 'Msg Logs' },
+    { id: 'reports',   icon: '📊', label: 'Reports' },
+    { id: 'settings',  icon: '⚙️', label: 'Settings', adminOnly: true },
+  ];
+
+  const visible = navItems.filter(n => !n.adminOnly || isAdmin);
+
+  const PANEL_LABEL: Record<Panel, string> = {
+    overview: 'Overview', register: "Today's Register", students: 'Students',
+    messages: 'Send SMS', logs: 'Message Logs', reports: 'Reports', settings: 'Settings',
+  };
+  const PANEL_ICON: Record<Panel, string> = {
+    overview: '🏠', register: '📋', students: '👥',
+    messages: '💬', logs: '🗂️', reports: '📊', settings: '⚙️',
+  };
+
+  function navigate(id: Panel) {
+    setPanel(id);
+    setOpen(false);
+  }
+
+  return (
+    <>
+      {/* ── Slim bottom strip: current page indicator only ── */}
+      <div style={{
+        display: 'none',
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        height: 54, background: 'var(--surface)',
+        borderTop: '1px solid var(--border)',
+        alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 20px 0 16px',
+        zIndex: 190,
+        fontFamily: "'Sora', sans-serif",
+      }} className="mobile-bottom-strip">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 18 }}>{PANEL_ICON[panel]}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{PANEL_LABEL[panel]}</span>
+        </div>
+        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>☰ for menu</span>
+      </div>
+
+      {/* ── FAB ── */}
+      <button
+        aria-label={open ? 'Close navigation menu' : 'Open navigation menu'}
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'none',
+          position: 'fixed', bottom: 70, right: 18,
+          width: 52, height: 52, borderRadius: '50%',
+          background: 'var(--ink)',
+          border: 'none', cursor: 'pointer',
+          flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: 5, padding: 14,
+          zIndex: 210,
+          boxShadow: '0 4px 16px rgba(0,0,0,.28)',
+          transition: 'transform .15s',
+        }}
+        className="mobile-fab"
+        onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.07)')}
+        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+      >
+        {/* Animated hamburger → X */}
+        <span style={{
+          display: 'block', width: 20, height: 2,
+          background: '#fff', borderRadius: 2,
+          transition: 'transform .25s, opacity .2s',
+          transform: open ? 'translateY(7px) rotate(45deg)' : 'none',
+        }} />
+        <span style={{
+          display: 'block', width: 20, height: 2,
+          background: '#fff', borderRadius: 2,
+          transition: 'opacity .2s',
+          opacity: open ? 0 : 1,
+        }} />
+        <span style={{
+          display: 'block', width: 20, height: 2,
+          background: '#fff', borderRadius: 2,
+          transition: 'transform .25s, opacity .2s',
+          transform: open ? 'translateY(-7px) rotate(-45deg)' : 'none',
+        }} />
+      </button>
+
+      {/* ── Backdrop ── */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0,0,0,.52)',
+            zIndex: 215,
+            animation: 'fadeIn .2s ease',
+          }}
+        />
+      )}
+
+      {/* ── Slide-up Drawer ── */}
+      <div
+        ref={drawerRef}
+        style={{
+          display: 'none',
+          position: 'fixed', bottom: 0, left: 0, right: 0,
+          background: '#111210',   /* very dark — well clear of all text */
+          borderRadius: '20px 20px 0 0',
+          zIndex: 220,
+          transform: open ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform .32s cubic-bezier(.32,0,.2,1)',
+          paddingBottom: 'env(safe-area-inset-bottom, 12px)',
+          maxHeight: '88vh',
+          overflowY: 'auto',
+        }}
+        className="mobile-drawer"
+      >
+        {/* Handle */}
+        <div style={{
+          width: 36, height: 4,
+          background: 'rgba(255,255,255,.18)',
+          borderRadius: 2, margin: '12px auto 14px',
+        }} />
+
+        {/* School header */}
+        <div style={{
+          padding: '0 18px 14px',
+          borderBottom: '1px solid rgba(255,255,255,.09)',
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: .7,
+            textTransform: 'uppercase',
+            color: 'rgba(255,255,255,.38)',
+            marginBottom: 4,
+          }}>
+            {isAdmin ? '🏫 School Admin' : '👩‍🏫 Teacher'}
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#f0ede6' }}>
+            {userProfile.schoolName}
+          </div>
+        </div>
+
+        {/* Token badge */}
+        <div style={{ padding: '10px 18px 0' }}>
+          <button
+            onClick={() => { onTopUp(); setOpen(false); }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: 'rgba(0,200,150,.12)',
+              border: '1px solid rgba(0,200,150,.25)',
+              borderRadius: 10, padding: '8px 14px',
+              cursor: 'pointer', width: '100%',
+              fontFamily: "'Sora', sans-serif",
+            }}
+          >
+            <span style={{ fontSize: 15 }}>🪙</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#34d9a5' }}>{tokens} tokens</span>
+            <span style={{ fontSize: 11, color: 'rgba(0,200,150,.55)', marginLeft: 'auto' }}>Top up →</span>
+          </button>
+        </div>
+
+        {/* Nav section label */}
+        <div style={{
+          padding: '14px 18px 6px',
+          fontSize: 9, fontWeight: 700, letterSpacing: .8,
+          textTransform: 'uppercase', color: 'rgba(255,255,255,.28)',
+        }}>
+          Navigation
+        </div>
+
+        {/* Nav grid — 2 columns */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 6, padding: '0 12px',
+        }}>
+          {visible.map(n => {
+            const active = panel === n.id;
+            return (
+              <button
+                key={n.id}
+                onClick={() => navigate(n.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 9,
+                  padding: '11px 12px',
+                  borderRadius: 10,
+                  background: active ? 'rgba(0,200,150,.15)' : 'rgba(255,255,255,.04)',
+                  border: active
+                    ? '1px solid rgba(0,200,150,.3)'
+                    : '1px solid rgba(255,255,255,.06)',
+                  cursor: 'pointer',
+                  fontFamily: "'Sora', sans-serif",
+                  fontSize: 13, fontWeight: 600,
+                  color: active ? '#34d9a5' : '#c8c4bc',   /* light warm white — never dark */
+                  textAlign: 'left',
+                  transition: 'background .15s, color .15s',
+                }}
+              >
+                <span style={{ fontSize: 16, flexShrink: 0 }}>{n.icon}</span>
+                {n.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Footer: user info + sign out */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 18px 4px',
+          borderTop: '1px solid rgba(255,255,255,.09)',
+          marginTop: 14,
+        }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#f0ede6', marginBottom: 2 }}>
+              {userProfile.displayName}
+            </div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>
+              {userProfile.email}
+            </div>
+          </div>
+          <button
+            onClick={() => { setOpen(false); onSignOut(); }}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '7px 14px',
+              border: '1px solid rgba(255,255,255,.18)',
+              borderRadius: 8, background: 'transparent',
+              color: 'rgba(255,255,255,.55)',
+              cursor: 'pointer', fontFamily: "'Sora', sans-serif",
+              transition: 'border-color .15s, color .15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.45)'; e.currentTarget.style.color = '#f0ede6'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.18)'; e.currentTarget.style.color = 'rgba(255,255,255,.55)'; }}
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+
+      {/* ── Inject CSS that activates the mobile elements at ≤768 px ── */}
+      <style>{`
+        @media (max-width: 768px) {
+          .mobile-bottom-strip { display: flex !important; }
+          .mobile-fab           { display: flex !important; }
+          .mobile-drawer        { display: block !important; }
+          @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+        }
+      `}</style>
+    </>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 export default function AppDashboard() {
   const { user, userProfile, logOut, refreshProfile } = useAuth();
@@ -227,7 +508,6 @@ export default function AppDashboard() {
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [newStudent, setNewStudent] = useState({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
 
-  // Compose state — body only (header/footer are auto-appended)
   const [msgBody, setMsgBody] = useState('');
   const [msgType, setMsgType] = useState('notice');
   const [msgTo, setMsgTo]     = useState('All School');
@@ -238,19 +518,16 @@ export default function AppDashboard() {
   const [previewMsg, setPreviewMsg]   = useState<Message | null>(null);
   const [showTopUp, setShowTopUp]     = useState(false);
 
-  // School info loaded from Firestore (contains the SMS footer phone)
   const [schoolInfo, setSchoolInfo] = useState<SchoolInfo | null>(null);
-  // Phone field editable in settings
   const [settingsPhone, setSettingsPhone] = useState('');
 
   const isAdmin   = userProfile?.role === 'schoolAdmin';
   const schoolId  = userProfile?.schoolId || '';
-  const classCode = isAdmin ? (userProfile?.classCode || 'All') : (userProfile?.classCode || 'Grade 7A');
+  const classCode = isAdmin ? (userProfile?.classCode || 'Class') : (userProfile?.classCode || 'Class');
   const tokens    = userProfile?.messageTokens ?? 0;
   const tier      = getSmsTier(students.length);
   const kesRate   = KES_RATE_PER_TOKEN[tier];
 
-  // Load school info from Firestore for SMS footer
   useEffect(() => {
     if (!schoolId) return;
     getDoc(doc(db, 'schools', schoolId)).then(snap => {
@@ -313,7 +590,6 @@ export default function AppDashboard() {
   Object.values(attendance).forEach(s => counts[s]++);
   const rate = students.length ? Math.round((counts.present / students.length) * 100) : 0;
 
-  // ── Save register + auto-send attendance SMS ──────────────────────────────
   async function saveRegister() {
     if (!userProfile || !schoolInfo) return;
     try {
@@ -407,7 +683,6 @@ export default function AppDashboard() {
     } catch (e: any) { toast('❌ ' + e.message); }
   }
 
-  // ── Broadcast send from compose panel ────────────────────────────────────
   async function sendBroadcastMessage() {
     if (!userProfile || !schoolInfo || !msgBody.trim()) return;
     setSendingMsg(true);
@@ -478,14 +753,13 @@ export default function AppDashboard() {
     </div>
   );
 
-  // ─── Date helper for SMS previews ─────────────────────────────────────────
   const todayLabel = new Date().toLocaleDateString('en-KE', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
   return (
     <div className="app-shell">
-      {/* SIDEBAR */}
+      {/* DESKTOP SIDEBAR */}
       <aside className="sidebar">
         <div className="sidebar-logo">my<span>register</span></div>
         <div className="sidebar-school">
@@ -620,7 +894,6 @@ export default function AppDashboard() {
               </div>
             </div>
             <div className="page-body">
-              {/* Auto-notify info banner */}
               {!registerLocked && (counts.absent > 0 || counts.late > 0) && (
                 <div className="notice notice-info">
                   📲 <strong>Auto-notify on save:</strong>{' '}
@@ -696,7 +969,6 @@ export default function AppDashboard() {
                 </div>
               </div>
 
-              {/* SMS preview cards — shown before saving */}
               {!registerLocked && schoolInfo && (counts.absent > 0 || counts.late > 0) && (
                 <div className="card">
                   <div className="card-header">
@@ -819,7 +1091,6 @@ export default function AppDashboard() {
                 </div>
               )}
 
-              {/* Format explainer */}
               {schoolInfo && (
                 <div style={{ background: 'rgba(44,111,173,.06)', border: '1px solid rgba(44,111,173,.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13 }}>
                   <div style={{ fontWeight: 700, color: 'var(--blue)', marginBottom: 8 }}>📋 Every SMS follows this format:</div>
@@ -1119,22 +1390,16 @@ export default function AppDashboard() {
         }}
       />
 
-      {/* MOBILE BOTTOM NAV */}
-      <nav style={{ display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, background: 'var(--ink)', borderTop: '1px solid rgba(255,255,255,.1)', padding: '8px 0 12px', zIndex: 200 }} className="mobile-bottom-nav">
-        {([
-          { id: 'overview', icon: '🏠', label: 'Home' },
-          { id: 'register', icon: '📋', label: 'Register' },
-          { id: 'students', icon: '👥', label: 'Students' },
-          { id: 'messages', icon: '📲', label: 'SMS' },
-          { id: 'logs',     icon: '🗂️', label: 'Logs' },
-        ] as { id: Panel; icon: string; label: string }[]).map(n => (
-          <button key={n.id} onClick={() => setPanel(n.id)}
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, background: 'transparent', border: 'none', cursor: 'pointer', color: panel === n.id ? 'var(--mint)' : 'rgba(255,255,255,.4)', fontFamily: "'Sora',sans-serif", fontSize: 10, fontWeight: panel === n.id ? 700 : 500, padding: '4px 0', transition: '.15s' }}>
-            <span style={{ fontSize: 20 }}>{n.icon}</span>{n.label}
-          </button>
-        ))}
-      </nav>
-
+      {/* ── MOBILE DRAWER NAV (replaces old bottom bar) ───────────────────── */}
+      <MobileDrawerNav
+        panel={panel}
+        setPanel={setPanel}
+        isAdmin={isAdmin}
+        userProfile={userProfile}
+        tokens={tokens}
+        onTopUp={() => setShowTopUp(true)}
+        onSignOut={async () => { await logOut(); navigate('/'); }}
+      />
 
       {ToastEl}
     </div>
