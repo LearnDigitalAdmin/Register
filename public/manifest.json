@@ -1,7 +1,7 @@
 {
-  "name": "MyRegister – Kenya School Attendance & Parent SMS",
+  "name": "MyRegister – Kenya School Register",
   "short_name": "MyRegister",
-  "description": "Kenya's smartest school register. Digital attendance, SMS parent notifications, and analytics for CBC and 8-4-4 schools. Built by Samuhia Businesses / Cogvana.",
+  "description": "Digital attendance, SMS parent notifications, and analytics for Kenyan schools.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,123 +9,19 @@
   "theme_color": "#00c896",
   "background_color": "#0d1117",
   "lang": "en-KE",
-  "dir": "ltr",
-  "categories": ["education", "productivity", "utilities"],
-  "iarc_rating_id": "",
   "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/icons/icon-48x48.png",
-      "sizes": "48x48",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-72x72.png",
-      "sizes": "72x72",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-96x96.png",
-      "sizes": "96x96",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-128x128.png",
-      "sizes": "128x128",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-144x144.png",
-      "sizes": "144x144",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-152x152.png",
-      "sizes": "152x152",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-192x192.png",
+      "src": "/icons/manifest-icon-192.maskable.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     },
     {
-      "src": "/icons/icon-256x256.png",
-      "sizes": "256x256",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-384x384.png",
-      "sizes": "384x384",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-512x512.png",
+      "src": "/icons/manifest-icon-512.maskable.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/icon-maskable-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
-    },
-    {
-      "src": "/icons/icon-maskable-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     }
-  ],
-  "screenshots": [
-    {
-      "src": "/screenshots/desktop-dashboard.png",
-      "sizes": "1280x800",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "MyRegister Dashboard – Class Register & Attendance"
-    },
-    {
-      "src": "/screenshots/mobile-register.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Today's Register on Mobile"
-    }
-  ],
-  "shortcuts": [
-    {
-      "name": "Open Register",
-      "short_name": "Register",
-      "description": "Open today's class register",
-      "url": "/app",
-      "icons": [{ "src": "/icons/icon-96x96.png", "sizes": "96x96" }]
-    },
-    {
-      "name": "Send SMS",
-      "short_name": "SMS",
-      "description": "Send SMS to parents",
-      "url": "/app",
-      "icons": [{ "src": "/icons/icon-96x96.png", "sizes": "96x96" }]
-    }
-  ],
-  "related_applications": [],
-  "share_target": {
-    "action": "/app",
-    "method": "GET",
-    "params": {
-      "title": "title",
-      "text": "text"
-    }
-  }
+  ]
 }
