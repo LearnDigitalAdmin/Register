@@ -50,23 +50,11 @@ function SmsComposeBox({
   const notEnoughTokens = recipientCount > 0 && tokenCost > tokens;
   const canSend = body.trim().length > 0 && !isOver && !notEnoughTokens && recipientCount > 0 && !sending;
 
-  // The textarea shows the full formatted message.
-  // When the user edits it, we extract the body lines back out.
-  function handleChange(val: string) {
-    const lines = val.split('\n');
-    if (lines.length >= 3) {
-      // First line = "Dear X," — last line = "School: phone" — middle = body
-      onBodyChange(lines.slice(1, -1).join('\n'));
-    } else {
-      onBodyChange(val);
-    }
-  }
-
   return (
     <div>
       <div className="form-group">
         <label className="form-label">
-          Message
+          Message Body
           <span style={{
             marginLeft: 8, fontSize: 11, letterSpacing: 0, textTransform: 'none',
             fontWeight: 400, color: isOver ? 'var(--red)' : 'var(--text-3)',
@@ -75,13 +63,13 @@ function SmsComposeBox({
           </span>
         </label>
 
-        {/* Full formatted message — what the parent actually receives */}
+        {/* Body-only textarea — user types here, no header/footer interference */}
         <textarea
           className="form-input"
-          rows={7}
-          value={fullText}
-          onChange={e => handleChange(e.target.value)}
-          placeholder={`Type your message body here...\n\n"Dear Parent Name," and "${school.name}: ${school.phone}" are added automatically.`}
+          rows={4}
+          value={body}
+          onChange={e => onBodyChange(e.target.value)}
+          placeholder="Type your message body here…"
           style={{
             resize: 'vertical',
             fontFamily: "'DM Mono', monospace",
@@ -91,18 +79,38 @@ function SmsComposeBox({
           }}
         />
 
-        {/* Legend showing which parts are automatic */}
+        {/* Legend */}
         {body.trim().length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
             <span style={{ background: 'rgba(44,111,173,.1)', color: 'var(--blue)', border: '1px solid rgba(44,111,173,.2)', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>
-              🔵 Auto-header: "Dear [Parent Name],"
+              🔵 Auto-header: "Dear Parent,"
             </span>
             <span style={{ background: 'rgba(0,200,150,.08)', color: 'var(--mint-d)', border: '1px solid rgba(0,200,150,.2)', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>
-              ✏️ Your body (editable)
+              ✏️ Your body (editable above)
             </span>
             <span style={{ background: 'rgba(245,166,35,.1)', color: '#c4800a', border: '1px solid rgba(245,166,35,.2)', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>
               🟡 Auto-footer: "{school.name}: {school.phone}"
             </span>
+          </div>
+        )}
+
+        {/* Read-only full preview */}
+        {body.trim().length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 6 }}>
+              Full message preview (what parents receive)
+            </div>
+            <div style={{
+              background: 'var(--surface-2)',
+              border: `1px solid ${isOver ? 'rgba(232,69,69,.4)' : 'var(--border)'}`,
+              borderRadius: 10, padding: '10px 14px',
+              fontSize: 12, fontFamily: "'DM Mono', monospace",
+              lineHeight: 1.8, whiteSpace: 'pre-wrap',
+              color: 'var(--ink)',
+              userSelect: 'all',
+            }}>
+              {fullText}
+            </div>
           </div>
         )}
       </div>
@@ -1126,6 +1134,7 @@ export default function AppDashboard() {
           </button>
         ))}
       </nav>
+
 
       {ToastEl}
     </div>

@@ -1,7 +1,7 @@
 // service-worker.js - PWA Service Worker
 
-const CACHE_NAME = 'register-v1';
-const RUNTIME_CACHE = 'register-runtime-v1';
+const CACHE_NAME = 'register-v2';
+const RUNTIME_CACHE = 'register-runtime-v2';
 
 // Assets to cache on install
 const PRECACHE_ASSETS = [

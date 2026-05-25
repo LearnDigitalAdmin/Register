@@ -1,5 +1,5 @@
 /**
- * src/messagingService.ts
+ * src/services/messagingService.ts
  *
  * MESSAGE FORMAT (every outbound SMS):
  *   Dear {parentName},
@@ -8,6 +8,7 @@
  */
 
 import { addDoc, collection, doc, updateDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../firebase';
 import {
   Student,
@@ -19,10 +20,6 @@ import {
   getSmsTier,
   KES_RATE_PER_TOKEN,
 } from '../types';
-
-const CLOUD_FN_URL =
-  (import.meta as any).env?.VITE_SMS_FUNCTION_URL ??
-  'https://africa-south1-learn-000111.cloudfunctions.net/sendSms';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -163,20 +160,36 @@ export function extractBody(fullMessage: string): string {
 
 // ─── Cloud Function caller ────────────────────────────────────────────────────
 
+/**
+ * Calls the sendSms Firebase callable function.
+ * Uses httpsCallable so auth tokens are injected automatically.
+ */
 export async function callSendSmsFunction(payload: {
-  to: string; message: string; schoolId: string; type: string; system?: boolean;
-}): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  phone: string | string[];
+  message: string;
+  schoolId: string;
+  schoolName: string;
+  type?: string;
+}): Promise<{ success: boolean; reference?: string; error?: string }> {
   try {
-    const res = await fetch(CLOUD_FN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+    const functions = getFunctions(undefined, 'africa-south1');
+    const sendSms   = httpsCallable<
+      { phone: string | string[]; message: string; schoolId: string; schoolName: string },
+      { success: boolean; reference: string; message: string }
+    >(functions, 'sendSms');
+
+    const result = await sendSms({
+      phone:      payload.phone,
+      message:    payload.message,
+      schoolId:   payload.schoolId,
+      schoolName: payload.schoolName,
     });
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}: ${await res.text()}` };
-    const data = await res.json();
-    return { success: true, messageId: data.messageId ?? data.id };
+
+    return { success: result.data.success, reference: result.data.reference };
   } catch (err: any) {
-    return { success: false, error: err.message ?? 'Network error' };
+    const msg = err?.message ?? 'Unknown error';
+    console.error('callSendSmsFunction error:', msg);
+    return { success: false, error: msg };
   }
 }
 
@@ -214,8 +227,10 @@ export async function sendTokenWarning(params: {
     `Top up via M-Pesa to notify parents. myregister.co.ke`;
 
   await callSendSmsFunction({
-    to: params.toPhone, message: msg,
-    schoolId: params.schoolId, type: 'system', system: true,
+    phone:      params.toPhone,
+    message:    msg,
+    schoolId:   params.schoolId,
+    schoolName: params.schoolName,
   });
 }
 
@@ -274,10 +289,14 @@ export async function sendRegisterNotifications(params: {
     if (sender.phone) {
       try {
         await sendTokenWarning({
-          toPhone: sender.phone, senderName: sender.displayName,
-          schoolName: school.name, tokensNeeded: totalNeeded,
+          toPhone:         sender.phone,
+          senderName:      sender.displayName,
+          schoolName:      school.name,
+          tokensNeeded:    totalNeeded,
           tokensAvailable: sender.messageTokens,
-          absentCount, lateCount, schoolId: sender.schoolId,
+          absentCount,
+          lateCount,
+          schoolId:        sender.schoolId,
         });
         warningSmsSent = true;
       } catch (_) {}
@@ -303,7 +322,12 @@ export async function sendRegisterNotifications(params: {
   for (let i = 0; i < jobs.length; i += BATCH) {
     const results = await Promise.allSettled(
       jobs.slice(i, i + BATCH).map(job =>
-        callSendSmsFunction({ to: job.to, message: job.message, schoolId: sender.schoolId, type: job.type }),
+        callSendSmsFunction({
+          phone:      job.to,
+          message:    job.message,
+          schoolId:   sender.schoolId,
+          schoolName: sender.schoolName,
+        }),
       ),
     );
     results.forEach(r => { if (r.status === 'fulfilled' && r.value.success) sent++; else failed++; });
@@ -350,37 +374,42 @@ export async function sendBroadcast(params: {
       error: `Insufficient tokens. Need ${totalTokens}, available ${sender.messageTokens}.` };
   }
 
-  const jobs = recipients
+  const phones = recipients
     .filter(r => r.parentPhone?.trim())
-    .map(r => ({
-      to: r.parentPhone,
-      message: buildMessage(r.parentName || 'Parent', bodyText, school.name, school.phone),
-    }));
+    .map(r => r.parentPhone);
 
-  let sent = 0, failed = 0;
-  const BATCH = 5;
-  for (let i = 0; i < jobs.length; i += BATCH) {
-    const results = await Promise.allSettled(
-      jobs.slice(i, i + BATCH).map(j =>
-        callSendSmsFunction({ to: j.to, message: j.message, schoolId: sender.schoolId, type }),
-      ),
-    );
-    results.forEach(r => { if (r.status === 'fulfilled' && r.value.success) sent++; else failed++; });
+  if (phones.length === 0) {
+    return { sent: 0, failed: 0, tokensUsed: 0, error: 'No recipients with a phone number.' };
   }
 
-  const tokensUsed = Math.min(totalTokens, sender.messageTokens);
-  try {
-    await updateDoc(doc(db, 'users', sender.uid), { messageTokens: sender.messageTokens - tokensUsed });
-  } catch (_) {}
+  // Single bulk call — cloud function accepts string[] and joins to a comma-separated
+  // string for HostPinnacle, so all recipients receive the message in one request.
+  // Broadcast uses a generic "Dear Parent," header since one body goes to everyone.
+  const result = await callSendSmsFunction({
+    phone:      phones,
+    message:    sample,
+    schoolId:   sender.schoolId,
+    schoolName: sender.schoolName,
+  });
+
+  const sent       = result.success ? phones.length : 0;
+  const failed     = result.success ? 0 : phones.length;
+  const tokensUsed = result.success ? Math.min(totalTokens, sender.messageTokens) : 0;
+
+  if (tokensUsed > 0) {
+    try {
+      await updateDoc(doc(db, 'users', sender.uid), { messageTokens: sender.messageTokens - tokensUsed });
+    } catch (_) {}
+  }
 
   await logMessageToFirestore({
     schoolId: sender.schoolId, sentBy: sender.displayName, type,
-    recipients: recipientsLabel, recipientCount: recipients.length,
+    recipients: recipientsLabel, recipientCount: phones.length,
     rawContent: bodyText, content: sample, smsSegments: segments,
     tier, tokensUsed,
-    status: failed === 0 ? 'sent' : sent > 0 ? 'partial' : 'failed',
-    delivered: sent, total: recipients.length,
+    status: result.success ? 'sent' : 'failed',
+    delivered: sent, total: phones.length,
   });
 
-  return { sent, failed, tokensUsed };
+  return { sent, failed, tokensUsed, error: result.error };
 }
