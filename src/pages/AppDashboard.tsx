@@ -22,6 +22,9 @@ import {
 } from '../services/messagingService';
 import { useToast } from '../useToast';
 import MpesaTopUpModal from '../components/MpesaTopUpModal';
+import StudentProfileModal from '../components/StudentProfileModal';
+import TermlyReportModal from '../components/TermlyReportModal';
+import WeeklyReportModal from '../components/WeeklyReportModal';
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
 const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: 'A', late: 'L', excused: 'E' };
@@ -62,7 +65,6 @@ function SmsComposeBox({
             {charCount}/400 chars · {segments} SMS part{segments !== 1 ? 's' : ''} · {tokenCost} tokens (≈ KES {(tokenCost * kesRate).toFixed(2)})
           </span>
         </label>
-
         <textarea
           className="form-input"
           rows={4}
@@ -77,7 +79,6 @@ function SmsComposeBox({
             borderColor: isOver ? 'var(--red)' : notEnoughTokens ? 'var(--gold)' : undefined,
           }}
         />
-
         {body.trim().length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
             <span style={{ background: 'rgba(44,111,173,.1)', color: 'var(--blue)', border: '1px solid rgba(44,111,173,.2)', borderRadius: 6, padding: '2px 8px', fontSize: 11 }}>
@@ -91,7 +92,6 @@ function SmsComposeBox({
             </span>
           </div>
         )}
-
         {body.trim().length > 0 && (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 6 }}>
@@ -208,33 +208,20 @@ function MessageLogRow({ msg, onResend, onPreview }: {
 
 // ─── Mobile Drawer Nav ────────────────────────────────────────────────────────
 function MobileDrawerNav({
-  panel,
-  setPanel,
-  isAdmin,
-  userProfile,
-  tokens,
-  onTopUp,
-  onSignOut,
+  panel, setPanel, isAdmin, userProfile, tokens, onTopUp, onSignOut,
 }: {
-  panel: Panel;
-  setPanel: (p: Panel) => void;
-  isAdmin: boolean;
-  userProfile: any;
-  tokens: number;
-  onTopUp: () => void;
-  onSignOut: () => void;
+  panel: Panel; setPanel: (p: Panel) => void; isAdmin: boolean;
+  userProfile: any; tokens: number; onTopUp: () => void; onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
 
-  // Close on back-swipe / escape
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Prevent body scroll when drawer is open
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
@@ -261,23 +248,15 @@ function MobileDrawerNav({
     messages: '💬', logs: '🗂️', reports: '📊', settings: '⚙️',
   };
 
-  function navigate(id: Panel) {
-    setPanel(id);
-    setOpen(false);
-  }
+  function navigate(id: Panel) { setPanel(id); setOpen(false); }
 
   return (
     <>
-      {/* ── Slim bottom strip: current page indicator only ── */}
       <div style={{
-        display: 'none',
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        height: 54, background: 'var(--surface)',
-        borderTop: '1px solid var(--border)',
-        alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 20px 0 16px',
-        zIndex: 190,
-        fontFamily: "'Sora', sans-serif",
+        display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0,
+        height: 54, background: 'var(--surface)', borderTop: '1px solid var(--border)',
+        alignItems: 'center', justifyContent: 'space-between', padding: '0 20px 0 16px',
+        zIndex: 190, fontFamily: "'Sora', sans-serif",
       }} className="mobile-bottom-strip">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 18 }}>{PANEL_ICON[panel]}</span>
@@ -286,199 +265,76 @@ function MobileDrawerNav({
         <span style={{ fontSize: 11, color: 'var(--text-3)' }}>☰ for menu</span>
       </div>
 
-      {/* ── FAB ── */}
       <button
         aria-label={open ? 'Close navigation menu' : 'Open navigation menu'}
         onClick={() => setOpen(o => !o)}
         style={{
-          display: 'none',
-          position: 'fixed', bottom: 70, right: 18,
-          width: 52, height: 52, borderRadius: '50%',
-          background: 'var(--ink)',
+          display: 'none', position: 'fixed', bottom: 70, right: 18,
+          width: 52, height: 52, borderRadius: '50%', background: 'var(--ink)',
           border: 'none', cursor: 'pointer',
           flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          gap: 5, padding: 14,
-          zIndex: 210,
-          boxShadow: '0 4px 16px rgba(0,0,0,.28)',
-          transition: 'transform .15s',
+          gap: 5, padding: 14, zIndex: 210,
+          boxShadow: '0 4px 16px rgba(0,0,0,.28)', transition: 'transform .15s',
         }}
         className="mobile-fab"
         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.07)')}
         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
-        {/* Animated hamburger → X */}
-        <span style={{
-          display: 'block', width: 20, height: 2,
-          background: '#fff', borderRadius: 2,
-          transition: 'transform .25s, opacity .2s',
-          transform: open ? 'translateY(7px) rotate(45deg)' : 'none',
-        }} />
-        <span style={{
-          display: 'block', width: 20, height: 2,
-          background: '#fff', borderRadius: 2,
-          transition: 'opacity .2s',
-          opacity: open ? 0 : 1,
-        }} />
-        <span style={{
-          display: 'block', width: 20, height: 2,
-          background: '#fff', borderRadius: 2,
-          transition: 'transform .25s, opacity .2s',
-          transform: open ? 'translateY(-7px) rotate(-45deg)' : 'none',
-        }} />
+        <span style={{ display: 'block', width: 20, height: 2, background: '#fff', borderRadius: 2, transition: 'transform .25s, opacity .2s', transform: open ? 'translateY(7px) rotate(45deg)' : 'none' }} />
+        <span style={{ display: 'block', width: 20, height: 2, background: '#fff', borderRadius: 2, transition: 'opacity .2s', opacity: open ? 0 : 1 }} />
+        <span style={{ display: 'block', width: 20, height: 2, background: '#fff', borderRadius: 2, transition: 'transform .25s, opacity .2s', transform: open ? 'translateY(-7px) rotate(-45deg)' : 'none' }} />
       </button>
 
-      {/* ── Backdrop ── */}
       {open && (
-        <div
-          onClick={() => setOpen(false)}
-          style={{
-            position: 'fixed', inset: 0,
-            background: 'rgba(0,0,0,.52)',
-            zIndex: 215,
-            animation: 'fadeIn .2s ease',
-          }}
-        />
+        <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.52)', zIndex: 215, animation: 'fadeIn .2s ease' }} />
       )}
 
-      {/* ── Slide-up Drawer ── */}
-      <div
-        ref={drawerRef}
-        style={{
-          display: 'none',
-          position: 'fixed', bottom: 0, left: 0, right: 0,
-          background: '#111210',   /* very dark — well clear of all text */
-          borderRadius: '20px 20px 0 0',
-          zIndex: 220,
-          transform: open ? 'translateY(0)' : 'translateY(100%)',
-          transition: 'transform .32s cubic-bezier(.32,0,.2,1)',
-          paddingBottom: 'env(safe-area-inset-bottom, 12px)',
-          maxHeight: '88vh',
-          overflowY: 'auto',
-        }}
-        className="mobile-drawer"
-      >
-        {/* Handle */}
-        <div style={{
-          width: 36, height: 4,
-          background: 'rgba(255,255,255,.18)',
-          borderRadius: 2, margin: '12px auto 14px',
-        }} />
-
-        {/* School header */}
-        <div style={{
-          padding: '0 18px 14px',
-          borderBottom: '1px solid rgba(255,255,255,.09)',
-        }}>
-          <div style={{
-            fontSize: 10, fontWeight: 700, letterSpacing: .7,
-            textTransform: 'uppercase',
-            color: 'rgba(255,255,255,.38)',
-            marginBottom: 4,
-          }}>
+      <div ref={drawerRef} style={{
+        display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0,
+        background: '#111210', borderRadius: '20px 20px 0 0', zIndex: 220,
+        transform: open ? 'translateY(0)' : 'translateY(100%)',
+        transition: 'transform .32s cubic-bezier(.32,0,.2,1)',
+        paddingBottom: 'env(safe-area-inset-bottom, 12px)',
+        maxHeight: '88vh', overflowY: 'auto',
+      }} className="mobile-drawer">
+        <div style={{ width: 36, height: 4, background: 'rgba(255,255,255,.18)', borderRadius: 2, margin: '12px auto 14px' }} />
+        <div style={{ padding: '0 18px 14px', borderBottom: '1px solid rgba(255,255,255,.09)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: .7, textTransform: 'uppercase', color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>
             {isAdmin ? '🏫 School Admin' : '👩‍🏫 Teacher'}
           </div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#f0ede6' }}>
-            {userProfile.schoolName}
-          </div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#f0ede6' }}>{userProfile.schoolName}</div>
         </div>
-
-        {/* Token badge */}
         <div style={{ padding: '10px 18px 0' }}>
-          <button
-            onClick={() => { onTopUp(); setOpen(false); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              background: 'rgba(0,200,150,.12)',
-              border: '1px solid rgba(0,200,150,.25)',
-              borderRadius: 10, padding: '8px 14px',
-              cursor: 'pointer', width: '100%',
-              fontFamily: "'Sora', sans-serif",
-            }}
-          >
+          <button onClick={() => { onTopUp(); setOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,200,150,.12)', border: '1px solid rgba(0,200,150,.25)', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', width: '100%', fontFamily: "'Sora', sans-serif" }}>
             <span style={{ fontSize: 15 }}>🪙</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: '#34d9a5' }}>{tokens} tokens</span>
             <span style={{ fontSize: 11, color: 'rgba(0,200,150,.55)', marginLeft: 'auto' }}>Top up →</span>
           </button>
         </div>
-
-        {/* Nav section label */}
-        <div style={{
-          padding: '14px 18px 6px',
-          fontSize: 9, fontWeight: 700, letterSpacing: .8,
-          textTransform: 'uppercase', color: 'rgba(255,255,255,.28)',
-        }}>
-          Navigation
-        </div>
-
-        {/* Nav grid — 2 columns */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 6, padding: '0 12px',
-        }}>
+        <div style={{ padding: '14px 18px 6px', fontSize: 9, fontWeight: 700, letterSpacing: .8, textTransform: 'uppercase', color: 'rgba(255,255,255,.28)' }}>Navigation</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, padding: '0 12px' }}>
           {visible.map(n => {
             const active = panel === n.id;
             return (
-              <button
-                key={n.id}
-                onClick={() => navigate(n.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 9,
-                  padding: '11px 12px',
-                  borderRadius: 10,
-                  background: active ? 'rgba(0,200,150,.15)' : 'rgba(255,255,255,.04)',
-                  border: active
-                    ? '1px solid rgba(0,200,150,.3)'
-                    : '1px solid rgba(255,255,255,.06)',
-                  cursor: 'pointer',
-                  fontFamily: "'Sora', sans-serif",
-                  fontSize: 13, fontWeight: 600,
-                  color: active ? '#34d9a5' : '#c8c4bc',   /* light warm white — never dark */
-                  textAlign: 'left',
-                  transition: 'background .15s, color .15s',
-                }}
-              >
+              <button key={n.id} onClick={() => navigate(n.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 12px', borderRadius: 10, background: active ? 'rgba(0,200,150,.15)' : 'rgba(255,255,255,.04)', border: active ? '1px solid rgba(0,200,150,.3)' : '1px solid rgba(255,255,255,.06)', cursor: 'pointer', fontFamily: "'Sora', sans-serif", fontSize: 13, fontWeight: 600, color: active ? '#34d9a5' : '#c8c4bc', textAlign: 'left', transition: 'background .15s, color .15s' }}>
                 <span style={{ fontSize: 16, flexShrink: 0 }}>{n.icon}</span>
                 {n.label}
               </button>
             );
           })}
         </div>
-
-        {/* Footer: user info + sign out */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px 18px 4px',
-          borderTop: '1px solid rgba(255,255,255,.09)',
-          marginTop: 14,
-        }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px 4px', borderTop: '1px solid rgba(255,255,255,.09)', marginTop: 14 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#f0ede6', marginBottom: 2 }}>
-              {userProfile.displayName}
-            </div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>
-              {userProfile.email}
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#f0ede6', marginBottom: 2 }}>{userProfile.displayName}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>{userProfile.email}</div>
           </div>
-          <button
-            onClick={() => { setOpen(false); onSignOut(); }}
-            style={{
-              fontSize: 12, fontWeight: 600, padding: '7px 14px',
-              border: '1px solid rgba(255,255,255,.18)',
-              borderRadius: 8, background: 'transparent',
-              color: 'rgba(255,255,255,.55)',
-              cursor: 'pointer', fontFamily: "'Sora', sans-serif",
-              transition: 'border-color .15s, color .15s',
-            }}
+          <button onClick={() => { setOpen(false); onSignOut(); }} style={{ fontSize: 12, fontWeight: 600, padding: '7px 14px', border: '1px solid rgba(255,255,255,.18)', borderRadius: 8, background: 'transparent', color: 'rgba(255,255,255,.55)', cursor: 'pointer', fontFamily: "'Sora', sans-serif", transition: 'border-color .15s, color .15s' }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.45)'; e.currentTarget.style.color = '#f0ede6'; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.18)'; e.currentTarget.style.color = 'rgba(255,255,255,.55)'; }}
-          >
-            Sign Out
-          </button>
+          >Sign Out</button>
         </div>
       </div>
 
-      {/* ── Inject CSS that activates the mobile elements at ≤768 px ── */}
       <style>{`
         @media (max-width: 768px) {
           .mobile-bottom-strip { display: flex !important; }
@@ -498,35 +354,44 @@ export default function AppDashboard() {
   const { toast, ToastEl } = useToast();
   const [panel, setPanel] = useState<Panel>('overview');
 
-  const [students, setStudents] = useState<Student[]>([]);
-  const [attendance, setAttendance] = useState<Record<string, AttendanceStatus>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [registerLocked, setRegisterLocked] = useState(false);
-  const [searchQ, setSearchQ] = useState('');
-  const [attFilter, setAttFilter] = useState<AttendanceStatus | 'all'>('all');
-  const [loading, setLoading] = useState(true);
-  const [showAddStudent, setShowAddStudent] = useState(false);
-  const [newStudent, setNewStudent] = useState({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
+  const [students,        setStudents]        = useState<Student[]>([]);
+  const [attendance,      setAttendance]      = useState<Record<string, AttendanceStatus>>({});
+  const [notes,           setNotes]           = useState<Record<string, string>>({});
+  const [registerLocked,  setRegisterLocked]  = useState(false);
+  const [searchQ,         setSearchQ]         = useState('');
+  const [attFilter,       setAttFilter]       = useState<AttendanceStatus | 'all'>('all');
+  const [loading,         setLoading]         = useState(true);
+  const [showAddStudent,  setShowAddStudent]  = useState(false);
+  const [newStudent,      setNewStudent]      = useState({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
 
-  const [msgBody, setMsgBody] = useState('');
-  const [msgType, setMsgType] = useState('notice');
-  const [msgTo, setMsgTo]     = useState('All School');
-  const [sendingMsg, setSendingMsg] = useState(false);
+  const [msgBody,     setMsgBody]     = useState('');
+  const [msgType,     setMsgType]     = useState('notice');
+  const [msgTo,       setMsgTo]       = useState('All School');
+  const [sendingMsg,  setSendingMsg]  = useState(false);
 
-  const [msgLogs, setMsgLogs]         = useState<Message[]>([]);
+  const [msgLogs,     setMsgLogs]     = useState<Message[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [previewMsg, setPreviewMsg]   = useState<Message | null>(null);
-  const [showTopUp, setShowTopUp]     = useState(false);
+  const [previewMsg,  setPreviewMsg]  = useState<Message | null>(null);
+  const [showTopUp,   setShowTopUp]   = useState(false);
 
-  const [schoolInfo, setSchoolInfo] = useState<SchoolInfo | null>(null);
-  const [settingsPhone, setSettingsPhone] = useState('');
+  // ── Report modals ──────────────────────────────────────────────────────────
+  const [showTermly,        setShowTermly]        = useState(false);
+  const [showWeekly,        setShowWeekly]        = useState(false);
+  const [showStudentProfile,setShowStudentProfile]= useState(false);
+
+  const [schoolInfo,     setSchoolInfo]     = useState<SchoolInfo | null>(null);
+  const [settingsPhone,  setSettingsPhone]  = useState('');
 
   const isAdmin   = userProfile?.role === 'schoolAdmin';
   const schoolId  = userProfile?.schoolId || '';
-  const classCode = isAdmin ? (userProfile?.classCode || 'Class') : (userProfile?.classCode || 'Class');
+  const classCode = userProfile?.classCode || 'Class';
   const tokens    = userProfile?.messageTokens ?? 0;
   const tier      = getSmsTier(students.length);
   const kesRate   = KES_RATE_PER_TOKEN[tier];
+
+  const todayLabel = new Date().toLocaleDateString('en-KE', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
 
   useEffect(() => {
     if (!schoolId) return;
@@ -629,18 +494,13 @@ export default function AppDashboard() {
       toast(`📱 Register saved. Sending ${toNotify.length} parent notification${toNotify.length !== 1 ? 's' : ''}…`);
 
       const result = await sendRegisterNotifications({
-        students,
-        attendance,
+        students, attendance,
         sender: {
-          uid: user!.uid,
-          displayName: userProfile.displayName,
-          phone: userProfile.phone,
-          schoolId,
-          schoolName: schoolInfo.name,
+          uid: user!.uid, displayName: userProfile.displayName,
+          phone: userProfile.phone, schoolId, schoolName: schoolInfo.name,
           messageTokens: tokens,
         },
-        school: schoolInfo,
-        className: classCode,
+        school: schoolInfo, className: classCode,
         teacherName: userProfile.displayName,
         teacherPhone: userProfile.phone || schoolInfo.phone,
       });
@@ -648,18 +508,14 @@ export default function AppDashboard() {
       await refreshProfile();
 
       if (result.reason) {
-        toast(
-          `⚠️ Register saved but SMS blocked: ${result.reason}` +
-          (result.warningSmsSent ? ' A warning was sent to your phone.' : ' Add tokens to notify parents.'),
-        );
+        toast(`⚠️ Register saved but SMS blocked: ${result.reason}` +
+          (result.warningSmsSent ? ' A warning was sent to your phone.' : ' Add tokens to notify parents.'));
       } else if (result.failed > 0) {
         toast(`⚠️ ${result.sent} SMS sent, ${result.failed} failed. ${result.tokensUsed} tokens used.`);
       } else {
         toast(`✅ Register saved! ${result.sent} parent SMS sent. ${result.tokensUsed} tokens used.`);
       }
-    } catch (e: any) {
-      toast('❌ Save failed: ' + e.message);
-    }
+    } catch (e: any) { toast('❌ Save failed: ' + e.message); }
   }
 
   async function addStudent() {
@@ -688,19 +544,13 @@ export default function AppDashboard() {
     setSendingMsg(true);
     try {
       const result = await sendBroadcast({
-        bodyText: msgBody,
-        recipients: students,
+        bodyText: msgBody, recipients: students,
         sender: {
-          uid: user!.uid,
-          displayName: userProfile.displayName,
-          phone: userProfile.phone,
-          schoolId,
-          schoolName: schoolInfo.name,
+          uid: user!.uid, displayName: userProfile.displayName,
+          phone: userProfile.phone, schoolId, schoolName: schoolInfo.name,
           messageTokens: tokens,
         },
-        school: schoolInfo,
-        type: msgType,
-        recipientsLabel: msgTo,
+        school: schoolInfo, type: msgType, recipientsLabel: msgTo,
       });
       await refreshProfile();
       if (result.error) {
@@ -753,9 +603,62 @@ export default function AppDashboard() {
     </div>
   );
 
-  const todayLabel = new Date().toLocaleDateString('en-KE', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  });
+  // ─── Report card definitions ───────────────────────────────────────────────
+
+  /** Each card: what the onClick should do */
+  const reportCards: {
+    icon: string; title: string; desc: string;
+    action: () => void; badge?: string; badgeClass?: string;
+  }[] = [
+    {
+      icon: '📊',
+      title: 'Termly Attendance Report',
+      desc: 'Full attendance data per class and student for any term. Flags chronic absentees. CSV export.',
+      action: () => setShowTermly(true),
+      badge: 'Live',
+      badgeClass: 'tag-mint',
+    },
+    {
+      icon: '📋',
+      title: 'Weekly Summary',
+      desc: 'Day-by-day attendance rates per class for any selected week. Navigate backwards through history.',
+      action: () => setShowWeekly(true),
+      badge: 'Live',
+      badgeClass: 'tag-mint',
+    },
+    {
+      icon: '👤',
+      title: 'Student Profile Report',
+      desc: 'Full attendance history, heatmap, streaks and absence log for a single student. CSV export.',
+      action: () => setShowStudentProfile(true),
+      badge: 'Live',
+      badgeClass: 'tag-mint',
+    },
+    {
+      icon: '📲',
+      title: 'SMS Communication Log',
+      desc: 'All SMS messages with full token usage breakdown, delivery stats, and resend capability.',
+      action: () => setPanel('logs'),
+      badge: 'Go to Logs',
+      badgeClass: 'tag-blue',
+    },
+    {
+      icon: '⚠️',
+      title: 'Chronic Absentee Alert',
+      desc: 'Students below 80% attendance threshold — available inside the Termly Report.',
+      action: () => setShowTermly(true),
+      badge: 'Via Termly',
+      badgeClass: 'tag-gold',
+    },
+    {
+      icon: '📖',
+      title: 'Class Register Book',
+      desc: 'Full printable register book format for a class — PDF export coming soon.',
+      action: () => toast('📥 Class Register Book PDF export coming soon!'),
+      badge: 'Soon',
+      badgeClass: 'tag-gray',
+    },
+  ];
 
   return (
     <div className="app-shell">
@@ -788,7 +691,7 @@ export default function AppDashboard() {
 
       <main className="main-content">
 
-        {/* ── OVERVIEW ────────────────────────────────────────────────────── */}
+        {/* ── OVERVIEW ──────────────────────────────────────────────────── */}
         {panel === 'overview' && (
           <>
             <div className="page-header">
@@ -875,7 +778,7 @@ export default function AppDashboard() {
           </>
         )}
 
-        {/* ── REGISTER ────────────────────────────────────────────────────── */}
+        {/* ── REGISTER ──────────────────────────────────────────────────── */}
         {panel === 'register' && (
           <>
             <div className="page-header">
@@ -1003,7 +906,7 @@ export default function AppDashboard() {
           </>
         )}
 
-        {/* ── STUDENTS ────────────────────────────────────────────────────── */}
+        {/* ── STUDENTS ──────────────────────────────────────────────────── */}
         {panel === 'students' && (
           <>
             <div className="page-header">
@@ -1061,6 +964,9 @@ export default function AppDashboard() {
                               setPanel('messages');
                               toast('Message pre-filled for ' + s.name);
                             }}>SMS</button>
+                            <button className="btn-xs btn-xs-gray" onClick={() => {
+                              setShowStudentProfile(true);
+                            }} title="View profile">Profile</button>
                           </td>
                         </tr>
                       ))}
@@ -1073,7 +979,7 @@ export default function AppDashboard() {
           </>
         )}
 
-        {/* ── MESSAGES ────────────────────────────────────────────────────── */}
+        {/* ── MESSAGES ──────────────────────────────────────────────────── */}
         {panel === 'messages' && (
           <>
             <div className="page-header">
@@ -1090,7 +996,6 @@ export default function AppDashboard() {
                   <button className="btn-secondary" style={{ marginLeft: 16, fontSize: 12 }} onClick={() => setShowTopUp(true)}>💳 Top Up →</button>
                 </div>
               )}
-
               {schoolInfo && (
                 <div style={{ background: 'rgba(44,111,173,.06)', border: '1px solid rgba(44,111,173,.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13 }}>
                   <div style={{ fontWeight: 700, color: 'var(--blue)', marginBottom: 8 }}>📋 Every SMS follows this format:</div>
@@ -1106,7 +1011,6 @@ export default function AppDashboard() {
                   )}
                 </div>
               )}
-
               <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 24 }}>
                 <div className="card">
                   <div className="card-header"><span className="card-title">Compose SMS</span></div>
@@ -1142,7 +1046,6 @@ export default function AppDashboard() {
                     )}
                   </div>
                 </div>
-
                 <div>
                   <div className="card" style={{ marginBottom: 16 }}>
                     <div className="card-header"><span className="card-title">Token Credits</span></div>
@@ -1167,7 +1070,6 @@ export default function AppDashboard() {
                       <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowTopUp(true)}>💳 Top Up via M-Pesa</button>
                     </div>
                   </div>
-
                   <div className="card">
                     <div className="card-header">
                       <span className="card-title">Packages</span>
@@ -1186,7 +1088,6 @@ export default function AppDashboard() {
                       <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 10, paddingBottom: 4 }}>Prices based on {students.length} students. Tokens never expire.</div>
                     </div>
                   </div>
-
                   <div className="card" style={{ marginTop: 16 }}>
                     <div className="card-body" style={{ padding: '10px 16px' }}>
                       <button className="btn-secondary" style={{ width: '100%', justifyContent: 'center', fontSize: 13 }} onClick={() => setPanel('logs')}>🗂️ View All Message Logs →</button>
@@ -1198,7 +1099,7 @@ export default function AppDashboard() {
           </>
         )}
 
-        {/* ── MESSAGE LOGS ────────────────────────────────────────────────── */}
+        {/* ── MESSAGE LOGS ──────────────────────────────────────────────── */}
         {panel === 'logs' && (
           <>
             <div className="page-header">
@@ -1251,34 +1152,162 @@ export default function AppDashboard() {
           </>
         )}
 
-        {/* ── REPORTS ─────────────────────────────────────────────────────── */}
+        {/* ── REPORTS ───────────────────────────────────────────────────── */}
         {panel === 'reports' && (
           <>
-            <div className="page-header"><div><div className="page-title">Reports</div><div className="page-sub">Generate and export attendance &amp; school reports</div></div></div>
+            <div className="page-header">
+              <div>
+                <div className="page-title">Reports</div>
+                <div className="page-sub">Generate, analyse, and export attendance &amp; communication reports</div>
+              </div>
+            </div>
             <div className="page-body">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-                {[
-                  { icon: '📊', title: 'Termly Attendance Report', desc: 'Full attendance data per class and student for the current term' },
-                  { icon: '📋', title: 'Weekly Summary', desc: 'Attendance rates per class for the selected week' },
-                  { icon: '👤', title: 'Student Profile Report', desc: 'Individual attendance history for a selected student' },
-                  { icon: '📲', title: 'SMS Communication Log', desc: 'All SMS messages with full token usage breakdown' },
-                  { icon: '⚠️', title: 'Chronic Absentee Alert', desc: 'Students below 80% attendance threshold' },
-                  { icon: '📖', title: 'Class Register Book', desc: 'Full printable register book format for a class' },
-                ].map(r => (
-                  <div className="card" key={r.title} style={{ cursor: 'pointer' }} onClick={() => toast(`📥 ${r.title} — export coming soon!`)}>
-                    <div className="card-body" style={{ textAlign: 'center', padding: 32 }}>
-                      <div style={{ fontSize: 40, marginBottom: 12 }}>{r.icon}</div>
-                      <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)', marginBottom: 6 }}>{r.title}</div>
-                      <div style={{ fontSize: 13, color: 'var(--text-2)' }}>{r.desc}</div>
-                    </div>
+              {/* Report cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+                {reportCards.map(rc => (
+                  <div
+                    key={rc.title}
+                    onClick={rc.action}
+                    style={{
+                      background: 'var(--surface)',
+                      border: rc.badgeClass === 'tag-mint'
+                        ? '1px solid rgba(0,200,150,.25)'
+                        : '1px solid var(--border)',
+                      borderRadius: 16,
+                      padding: '22px 20px',
+                      cursor: 'pointer',
+                      position: 'relative',
+                      transition: 'box-shadow .2s, transform .15s',
+                    }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-lg)';
+                      (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLDivElement).style.boxShadow = 'none';
+                      (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)';
+                    }}
+                  >
+                    {rc.badge && (
+                      <span className={`tag ${rc.badgeClass}`} style={{ position: 'absolute', top: 14, right: 14, fontSize: 10 }}>
+                        {rc.badge}
+                      </span>
+                    )}
+                    <div style={{
+                      width: 46, height: 46, borderRadius: 12,
+                      background: rc.badgeClass === 'tag-mint' ? 'rgba(0,200,150,.1)' : 'var(--surface-2)',
+                      border: rc.badgeClass === 'tag-mint' ? '1px solid rgba(0,200,150,.2)' : '1px solid var(--border)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 22, marginBottom: 14,
+                    }}>{rc.icon}</div>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)', marginBottom: 6 }}>{rc.title}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>{rc.desc}</div>
                   </div>
                 ))}
+              </div>
+
+              {/* Quick stats strip */}
+              <div className="card">
+                <div className="card-header">
+                  <span className="card-title">School-wide Snapshot</span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn-xs btn-xs-mint" onClick={() => setShowTermly(true)}>Termly →</button>
+                    <button className="btn-xs btn-xs-gray" onClick={() => setShowWeekly(true)}>Weekly →</button>
+                  </div>
+                </div>
+                <div className="card-body">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+                    {[
+                      { label: 'Total Students', value: String(students.length), color: 'var(--ink)' },
+                      { label: 'Present Today', value: String(counts.present), color: 'var(--mint-d)' },
+                      { label: 'Absent Today',  value: String(counts.absent),  color: 'var(--red)' },
+                      { label: 'Today\'s Rate', value: `${rate}%`,             color: rate >= 90 ? 'var(--mint-d)' : rate >= 75 ? '#c4800a' : 'var(--red)' },
+                    ].map(s => (
+                      <div key={s.label} style={{ textAlign: 'center', padding: '12px 8px', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
+                    For deeper historical analysis, open the <strong>Termly</strong> or <strong>Weekly</strong> reports above.
+                    To inspect a specific student's pattern, use the <strong>Student Profile</strong> report.
+                  </div>
+                </div>
+              </div>
+
+              {/* SMS summary strip (linked to logs) */}
+              <div className="card" style={{ marginTop: 0 }}>
+                <div className="card-header">
+                  <span className="card-title">📲 SMS Communication Summary</span>
+                  <button className="btn-xs btn-xs-blue" style={{ background: 'rgba(44,111,173,.1)', color: 'var(--blue)', border: '1px solid rgba(44,111,173,.2)' }} onClick={() => setPanel('logs')}>
+                    View Full Logs →
+                  </button>
+                </div>
+                <div className="card-body">
+                  {msgLogs.length === 0 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                      <div style={{ fontSize: 32 }}>📭</div>
+                      <div>
+                        <div style={{ fontWeight: 600, color: 'var(--ink)' }}>No messages sent yet</div>
+                        <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+                          Messages will appear here after you save a register or send a broadcast.{' '}
+                          <span style={{ color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPanel('messages')}>Send your first SMS →</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+                        {[
+                          { label: 'Messages Sent', value: String(msgLogs.length), color: 'var(--ink)' },
+                          { label: 'Tokens Used',   value: String(msgLogs.reduce((a, m) => a + m.tokensUsed, 0)), color: '#c4800a' },
+                          { label: 'Parents Notified', value: String(msgLogs.reduce((a, m) => a + m.delivered, 0)), color: 'var(--mint-d)' },
+                          { label: 'Failed',         value: String(msgLogs.filter(m => m.status === 'failed').length), color: msgLogs.some(m => m.status === 'failed') ? 'var(--red)' : 'var(--text-3)' },
+                        ].map(s => (
+                          <div key={s.label} style={{ textAlign: 'center', padding: '10px 8px', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Recent messages mini table */}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 8 }}>3 Most Recent</div>
+                      {msgLogs.slice(0, 3).map(msg => (
+                        <div key={msg.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0',
+                          borderBottom: '1px solid var(--border)',
+                        }}>
+                          <span className={`tag ${msg.type === 'attendance' ? 'tag-blue' : msg.type === 'alert' ? 'tag-red' : 'tag-gray'}`} style={{ fontSize: 10, whiteSpace: 'nowrap', flexShrink: 0 }}>{msg.type}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.content}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                              {new Date(msg.sentAt).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })} · {msg.recipientCount} recipients · {msg.tokensUsed} tokens
+                            </div>
+                          </div>
+                          <span style={{
+                            fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 12, whiteSpace: 'nowrap', flexShrink: 0,
+                            background: msg.status === 'sent' ? 'rgba(0,200,150,.1)' : 'rgba(232,69,69,.1)',
+                            color: msg.status === 'sent' ? 'var(--mint-d)' : 'var(--red)',
+                          }}>
+                            {msg.status === 'sent' ? `✓ ${msg.delivered}/${msg.total}` : '✗ Failed'}
+                          </span>
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 12 }}>
+                        <button className="btn-secondary" style={{ fontSize: 13 }} onClick={() => setPanel('logs')}>
+                          🗂️ View all {msgLogs.length} messages →
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </>
         )}
 
-        {/* ── SETTINGS ────────────────────────────────────────────────────── */}
+        {/* ── SETTINGS ──────────────────────────────────────────────────── */}
         {panel === 'settings' && (
           <>
             <div className="page-header"><div><div className="page-title">Settings</div><div className="page-sub">Manage your school profile and SMS configuration</div></div></div>
@@ -1302,12 +1331,7 @@ export default function AppDashboard() {
                           (appears in every SMS footer)
                         </span>
                       </label>
-                      <input
-                        className="form-input"
-                        value={settingsPhone}
-                        placeholder="0700 000 000"
-                        onChange={e => setSettingsPhone(e.target.value)}
-                      />
+                      <input className="form-input" value={settingsPhone} placeholder="0700 000 000" onChange={e => setSettingsPhone(e.target.value)} />
                       <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
                         Every SMS ends with: "<em>{userProfile.schoolName}: {settingsPhone || '0700 000 000'}</em>"
                       </div>
@@ -1327,7 +1351,13 @@ export default function AppDashboard() {
                   <div className="card-header"><span className="card-title">Account</span></div>
                   <div className="card-body">
                     <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 16 }}>
-                      {[['Name', userProfile.displayName], ['Email', userProfile.email || '—'], ['Phone', userProfile.phone || 'Not set'], ['Role', userProfile.role], ['Member since', new Date(userProfile.createdAt).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })]].map(([k, v]) => (
+                      {[
+                        ['Name',         userProfile.displayName],
+                        ['Email',        userProfile.email || '—'],
+                        ['Phone',        userProfile.phone || 'Not set'],
+                        ['Role',         userProfile.role],
+                        ['Member since', new Date(userProfile.createdAt).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })],
+                      ].map(([k, v]) => (
                         <div key={k as string} style={{ marginBottom: 8 }}><strong>{k}:</strong> {v}</div>
                       ))}
                     </div>
@@ -1340,7 +1370,7 @@ export default function AppDashboard() {
         )}
       </main>
 
-      {/* ── MESSAGE PREVIEW MODAL ─────────────────────────────────────────── */}
+      {/* ── MESSAGE PREVIEW MODAL ─────────────────────────────────────── */}
       {previewMsg && (
         <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) setPreviewMsg(null); }}>
           <div className="modal" style={{ maxWidth: 540 }}>
@@ -1348,10 +1378,14 @@ export default function AppDashboard() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 {[
-                  ['Sent by', previewMsg.sentBy], ['Date', new Date(previewMsg.sentAt).toLocaleString('en-KE')],
-                  ['Type', previewMsg.type], ['Recipients', `${previewMsg.recipients} (${previewMsg.recipientCount})`],
-                  ['SMS parts', `${previewMsg.smsSegments} × 140 chars`], ['KES rate', `KES ${previewMsg.costPerSegment}/token`],
-                  ['Tokens used', String(previewMsg.tokensUsed)], ['Delivered', `${previewMsg.delivered} / ${previewMsg.total}`],
+                  ['Sent by',    previewMsg.sentBy],
+                  ['Date',       new Date(previewMsg.sentAt).toLocaleString('en-KE')],
+                  ['Type',       previewMsg.type],
+                  ['Recipients', `${previewMsg.recipients} (${previewMsg.recipientCount})`],
+                  ['SMS parts',  `${previewMsg.smsSegments} × 140 chars`],
+                  ['KES rate',   `KES ${previewMsg.costPerSegment}/token`],
+                  ['Tokens used', String(previewMsg.tokensUsed)],
+                  ['Delivered',   `${previewMsg.delivered} / ${previewMsg.total}`],
                 ].map(([k, v]) => (
                   <div key={k} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px' }}>
                     <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>{k}</div>
@@ -1375,7 +1409,7 @@ export default function AppDashboard() {
         </div>
       )}
 
-      {/* ── M-PESA TOP-UP MODAL ───────────────────────────────────────────── */}
+      {/* ── M-PESA TOP-UP MODAL ───────────────────────────────────────── */}
       <MpesaTopUpModal
         isOpen={showTopUp}
         onClose={() => setShowTopUp(false)}
@@ -1386,11 +1420,34 @@ export default function AppDashboard() {
         schoolName={userProfile.schoolName}
         onSuccess={async () => {
           await refreshProfile();
-          toast(`🎉 Tokens added! Your new balance is shown above.`);
+          toast('🎉 Tokens added! Your new balance is shown above.');
         }}
       />
 
-      {/* ── MOBILE DRAWER NAV (replaces old bottom bar) ───────────────────── */}
+      {/* ── REPORT MODALS ─────────────────────────────────────────────── */}
+      <TermlyReportModal
+        isOpen={showTermly}
+        onClose={() => setShowTermly(false)}
+        schoolId={schoolId}
+        schoolName={userProfile.schoolName}
+      />
+
+      <WeeklyReportModal
+        isOpen={showWeekly}
+        onClose={() => setShowWeekly(false)}
+        schoolId={schoolId}
+        schoolName={userProfile.schoolName}
+      />
+
+      <StudentProfileModal
+        isOpen={showStudentProfile}
+        onClose={() => setShowStudentProfile(false)}
+        schoolId={schoolId}
+        schoolName={userProfile.schoolName}
+        students={students}
+      />
+
+      {/* ── MOBILE DRAWER NAV ─────────────────────────────────────────── */}
       <MobileDrawerNav
         panel={panel}
         setPanel={setPanel}

@@ -248,3 +248,8 @@ tr:hover td { background:rgba(0,200,150,.02); }
   .lp-nav > div:last-child { gap: 8px; }
   .lp-nav > div:last-child button { padding: 8px 14px; font-size: 13px; }
 }
+
+@media (max-width: 768px) {
+  aside.sidebar { display: none; }
+  .main-content { margin-left: 0; }
+}
