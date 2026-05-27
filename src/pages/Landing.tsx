@@ -1,7 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 
+import ContactUs from '../components/ContactUs';
+import { useState } from 'react';
+
+
+
 export default function Landing() {
   const navigate = useNavigate();
+ const [showContact, setShowContact] = useState(false);
 
   return (
     <div style={{ background: 'var(--ink)', color: '#fff', minHeight: '100vh' }}>
@@ -119,6 +125,7 @@ export default function Landing() {
           <a onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}>Features</a>
           <a onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })}>Pricing</a>
           <a onClick={() => document.getElementById('about')?.scrollIntoView({ behavior: 'smooth' })}>About</a>
+          <a onClick={() => setShowContact(true)}>Contact</a>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button
@@ -449,6 +456,8 @@ export default function Landing() {
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>© 2025 SAMUHIA BUSINESSES. Made with love in Kenya.</p>
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>Platform free · Pay only for SMS</p>
       </div>
+
+      <ContactUs isOpen={showContact} onClose={() => setShowContact(false)} />
     </div>
   );
 }

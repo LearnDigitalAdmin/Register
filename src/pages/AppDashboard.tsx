@@ -25,6 +25,11 @@ import MpesaTopUpModal from '../components/MpesaTopUpModal';
 import StudentProfileModal from '../components/StudentProfileModal';
 import TermlyReportModal from '../components/TermlyReportModal';
 import WeeklyReportModal from '../components/WeeklyReportModal';
+// at the top with other imports
+import ContactUs, { ContactButton } from '../components/ContactUs';
+
+// with the other useState declarations
+const [showContact, setShowContact] = useState(false);
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
 const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: 'A', late: 'L', excused: 'E' };
@@ -328,6 +333,7 @@ function MobileDrawerNav({
             <div style={{ fontSize: 13, fontWeight: 700, color: '#f0ede6', marginBottom: 2 }}>{userProfile.displayName}</div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>{userProfile.email}</div>
           </div>
+          <ContactButton onClick={() => setShowContact(true)} variant="ghost" />
           <button onClick={() => { setOpen(false); onSignOut(); }} style={{ fontSize: 12, fontWeight: 600, padding: '7px 14px', border: '1px solid rgba(255,255,255,.18)', borderRadius: 8, background: 'transparent', color: 'rgba(255,255,255,.55)', cursor: 'pointer', fontFamily: "'Sora', sans-serif", transition: 'border-color .15s, color .15s' }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.45)'; e.currentTarget.style.color = '#f0ede6'; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.18)'; e.currentTarget.style.color = 'rgba(255,255,255,.55)'; }}
@@ -1457,6 +1463,8 @@ export default function AppDashboard() {
         onTopUp={() => setShowTopUp(true)}
         onSignOut={async () => { await logOut(); navigate('/'); }}
       />
+
+      <ContactUs isOpen={showContact} onClose={() => setShowContact(false)} />
 
       {ToastEl}
     </div>
