@@ -70,15 +70,17 @@ function normalizeSmsPhone(raw: string): string {
   if (clean.startsWith("7") || clean.startsWith("1")) return "254" + clean;
   return clean;
 }
- 
+
 function sanitizeSmsText(text: string): string {
+  // Preserve \n as a real newline placeholder before collapsing spaces
   const stripped = text
     .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
     .replace(/[\u{2600}-\u{27BF}]/gu, "")
-    .replace(/[^\x20-\x7E\xA0-\xFF]/gu, "")
-    .replace(/\s+/g, " ")
+    .replace(/[^\x20-\x7E\xA0-\xFF\n]/gu, "")  // ← allow \n through
+    .replace(/[^\S\n]+/g, " ")                   // ← collapse spaces but NOT newlines
+    .replace(/\n{3,}/g, "\n\n")                  // ← max 2 consecutive newlines
     .trim();
- 
+
   return stripped.length > SMS_CONFIG.MAX_LENGTH
     ? stripped.substring(0, SMS_CONFIG.MAX_LENGTH - 3) + "..."
     : stripped;
