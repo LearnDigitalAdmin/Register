@@ -1,20 +1,14 @@
 import { useNavigate } from 'react-router-dom';
-
-import ContactUs from '../components/ContactUs';
 import { useState } from 'react';
-
-
+import ContactUs from '../components/ContactUs';
 
 export default function Landing() {
   const navigate = useNavigate();
- const [showContact, setShowContact] = useState(false);
+  const [showContact, setShowContact] = useState(false);
 
   return (
     <div style={{ background: 'var(--ink)', color: '#fff', minHeight: '100vh' }}>
       <style>{`
-        /* ── Mobile-first responsive overrides ── */
-
-        /* NAV */
         .lp-nav {
           display: flex;
           align-items: center;
@@ -27,8 +21,6 @@ export default function Landing() {
           border-bottom: 1px solid rgba(255,255,255,.07);
         }
         .lp-nav-links { display: none; }
-
-        /* HERO */
         .hero-grid {
           padding: 56px 20px 60px;
           display: flex;
@@ -42,8 +34,6 @@ export default function Landing() {
         .hero-btns { display: flex; flex-direction: column; gap: 12px; margin-bottom: 28px; }
         .hero-btns button { width: 100%; padding: 15px 24px; }
         .hero-badges { flex-wrap: wrap; gap: 8px; }
-
-        /* HERO VISUAL */
         .hero-visual-wrap { position: relative; padding-bottom: 24px; }
         .sms-pill {
           position: absolute; bottom: 0; left: 0;
@@ -52,36 +42,26 @@ export default function Landing() {
           border-radius: 12px; padding: 10px 14px;
           display: flex; align-items: center; gap: 10;
         }
-
-        /* FEATURES */
         .section-pad { padding: 60px 20px; max-width: 1300px; margin: 0 auto; border-top: 1px solid rgba(255,255,255,.07); }
         .features-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
         .section-h2 { font-size: 30px; font-weight: 800; letter-spacing: -1px; margin-bottom: 12px; }
-
-        /* PRICING */
         .pricing-explainer {
           background: rgba(0,200,150,.05); border: 1px solid rgba(0,200,150,.2);
           border-radius: 16px; padding: 24px 20px; margin-bottom: 32px;
           display: flex; flex-direction: column; gap: 28px;
         }
         .pricing-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
-
-        /* FOOTER */
         .footer-grid {
           display: grid; grid-template-columns: 1fr 1fr; gap: 40px;
           padding: 48px 20px; max-width: 1300px; margin: 0 auto;
           border-top: 1px solid rgba(255,255,255,.07);
         }
         .footer-brand { grid-column: 1 / -1; }
-
-        /* BOTTOM BAR */
         .bottom-bar {
           border-top: 1px solid rgba(255,255,255,.07);
           padding: 20px;
-          display: flex; flex-direction: column; gap: 6; align-items: center; text-align: center;
+          display: flex; flex-direction: column; gap: 6px; align-items: center; text-align: center;
         }
-
-        /* ── Tablet (≥ 640px) ── */
         @media (min-width: 640px) {
           .lp-nav { padding: 18px 40px; }
           .hero-grid { padding: 72px 40px 72px; }
@@ -96,8 +76,6 @@ export default function Landing() {
           .footer-brand { grid-column: auto; }
           .bottom-bar { padding: 24px 40px; flex-direction: row; justify-content: space-between; }
         }
-
-        /* ── Desktop (≥ 1024px) ── */
         @media (min-width: 1024px) {
           .lp-nav { padding: 20px 60px; }
           .lp-nav-links { display: flex; gap: 32px; }
@@ -111,7 +89,6 @@ export default function Landing() {
           .footer-grid { grid-template-columns: 2fr 1fr 1fr 1fr; padding: 60px; }
           .bottom-bar { padding: 24px 60px; }
         }
-
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: .5; transform: scale(1.4); }
@@ -129,7 +106,6 @@ export default function Landing() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button
-            className="btn-ghost-lp"
             onClick={() => navigate('/login')}
             style={{ padding: '8px 16px', border: '1px solid rgba(255,255,255,.2)', borderRadius: 8, color: '#fff', background: 'transparent', fontFamily: "'Sora',sans-serif", fontSize: 13, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
@@ -279,8 +255,6 @@ export default function Landing() {
             Pay only for SMS tokens when you communicate with parents. The platform itself is always free.
           </p>
         </div>
-
-        {/* SMS pricing explainer */}
         <div className="pricing-explainer">
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--mint)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
@@ -322,89 +296,44 @@ export default function Landing() {
         <div className="pricing-grid">
           {[
             {
-              name: 'Platform',
-              price: 'Free',
-              period: 'Forever',
+              name: 'Platform', price: 'Free', period: 'Forever',
               desc: 'The entire MyRegister platform — attendance, analytics, reports — at no cost.',
-              features: [
-                'Unlimited classes & students',
-                'Daily registers with PDF export',
-                'Full attendance history & analytics',
-                'Admin + Teacher roles',
-                'Assignment & notice management',
-              ],
+              features: ['Unlimited classes & students','Daily registers with PDF export','Full attendance history & analytics','Admin + Teacher roles','Assignment & notice management'],
               highlight: false,
             },
             {
-              name: 'SMS Tokens',
-              price: 'From 0.4',
-              period: 'tokens per SMS part',
+              name: 'SMS Tokens', price: 'From 0.4', period: 'tokens per SMS part',
               desc: 'Buy tokens when you need to notify parents. No subscription, no commitment.',
-              features: [
-                '100 free tokens on signup',
-                'Plain-text SMS delivery',
-                'Absence alerts to parents',
-                'Broadcast to class or all school',
-                'Top up via M-Pesa anytime',
-                'Tokens never expire',
-              ],
+              features: ['100 free tokens on signup','Plain-text SMS delivery','Absence alerts to parents','Broadcast to class or all school','Top up via M-Pesa anytime','Tokens never expire'],
               highlight: true,
               subDetail: '0.7 tok (≤100) · 0.5 tok (≤300) · 0.4 tok (300+)',
             },
             {
-              name: 'County / Group',
-              price: 'Custom',
-              period: 'Volume pricing',
+              name: 'County / Group', price: 'Custom', period: 'Volume pricing',
               desc: 'For county education offices, school groups, and NGOs managing multiple schools.',
-              features: [
-                'Multiple schools under one account',
-                'Cross-school reporting & analytics',
-                'Dedicated onboarding & training',
-                'Bulk token discounts',
-              ],
+              features: ['Multiple schools under one account','Cross-school reporting & analytics','Dedicated onboarding & training','Bulk token discounts'],
               highlight: false,
             },
           ].map(p => (
-            <div
-              key={p.name}
-              style={{
-                background: p.highlight ? 'var(--mint)' : 'rgba(255,255,255,.04)',
-                border: `1px solid ${p.highlight ? 'var(--mint)' : 'rgba(255,255,255,.08)'}`,
-                borderRadius: 20, padding: '28px 24px',
-                color: p.highlight ? 'var(--ink)' : '#fff',
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14, color: p.highlight ? 'rgba(13,17,23,.6)' : 'rgba(255,255,255,.5)' }}>
-                {p.name}
-              </div>
+            <div key={p.name} style={{
+              background: p.highlight ? 'var(--mint)' : 'rgba(255,255,255,.04)',
+              border: `1px solid ${p.highlight ? 'var(--mint)' : 'rgba(255,255,255,.08)'}`,
+              borderRadius: 20, padding: '28px 24px',
+              color: p.highlight ? 'var(--ink)' : '#fff',
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14, color: p.highlight ? 'rgba(13,17,23,.6)' : 'rgba(255,255,255,.5)' }}>{p.name}</div>
               <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: -2 }}>{p.price}</div>
-              <div style={{ fontSize: 13, color: p.highlight ? 'rgba(13,17,23,.6)' : 'rgba(255,255,255,.4)', marginBottom: 4 }}>
-                {p.period}
-              </div>
+              <div style={{ fontSize: 13, color: p.highlight ? 'rgba(13,17,23,.6)' : 'rgba(255,255,255,.4)', marginBottom: 4 }}>{p.period}</div>
               {'subDetail' in p && p.subDetail && (
-                <div style={{
-                  fontSize: 10, fontWeight: 700, color: 'rgba(13,17,23,.5)',
-                  background: 'rgba(13,17,23,.08)', borderRadius: 6,
-                  padding: '3px 8px', display: 'inline-block', marginBottom: 8,
-                }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(13,17,23,.5)', background: 'rgba(13,17,23,.08)', borderRadius: 6, padding: '3px 8px', display: 'inline-block', marginBottom: 8 }}>
                   {p.subDetail}
                 </div>
               )}
-              <p style={{ fontSize: 14, color: p.highlight ? 'rgba(13,17,23,.65)' : 'rgba(255,255,255,.5)', marginBottom: 24, lineHeight: 1.6, fontFamily: "'Literata',serif", marginTop: 10 }}>
-                {p.desc}
-              </p>
+              <p style={{ fontSize: 14, color: p.highlight ? 'rgba(13,17,23,.65)' : 'rgba(255,255,255,.5)', marginBottom: 24, lineHeight: 1.6, fontFamily: "'Literata',serif", marginTop: 10 }}>{p.desc}</p>
               <hr style={{ border: 'none', borderTop: `1px solid ${p.highlight ? 'rgba(0,0,0,.1)' : 'rgba(255,255,255,.08)'}`, marginBottom: 20 }} />
               <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 0, marginBottom: 28 }}>
                 {p.features.map(f => (
-                  <li
-                    key={f}
-                    style={{
-                      fontSize: 14, color: p.highlight ? 'rgba(13,17,23,.8)' : 'rgba(255,255,255,.65)',
-                      display: 'flex', gap: 8, alignItems: 'flex-start',
-                      paddingBottom: 10, paddingTop: 10,
-                      borderBottom: `1px solid ${p.highlight ? 'rgba(0,0,0,.06)' : 'rgba(255,255,255,.05)'}`,
-                    }}
-                  >
+                  <li key={f} style={{ fontSize: 14, color: p.highlight ? 'rgba(13,17,23,.8)' : 'rgba(255,255,255,.65)', display: 'flex', gap: 8, alignItems: 'flex-start', paddingBottom: 10, paddingTop: 10, borderBottom: `1px solid ${p.highlight ? 'rgba(0,0,0,.06)' : 'rgba(255,255,255,.05)'}` }}>
                     <span style={{ color: p.highlight ? 'var(--ink)' : 'var(--mint)', fontWeight: 700, flexShrink: 0 }}>✓</span>
                     {f}
                   </li>
@@ -412,13 +341,7 @@ export default function Landing() {
               </ul>
               <button
                 onClick={() => navigate('/signup')}
-                style={{
-                  width: '100%', padding: 14, borderRadius: 10,
-                  fontFamily: "'Sora',sans-serif", fontSize: 14, fontWeight: 700, cursor: 'pointer',
-                  background: p.highlight ? 'var(--ink)' : 'transparent',
-                  color: '#fff',
-                  border: p.highlight ? 'none' : '1.5px solid rgba(255,255,255,.2)',
-                }}
+                style={{ width: '100%', padding: 14, borderRadius: 10, fontFamily: "'Sora',sans-serif", fontSize: 14, fontWeight: 700, cursor: 'pointer', background: p.highlight ? 'var(--ink)' : 'transparent', color: '#fff', border: p.highlight ? 'none' : '1.5px solid rgba(255,255,255,.2)' }}
               >
                 {p.highlight ? 'Get Started Free →' : 'Get Started'}
               </button>
@@ -434,6 +357,19 @@ export default function Landing() {
           <p style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', lineHeight: 1.7, marginTop: 12, maxWidth: 260, fontFamily: "'Literata',serif" }}>
             Kenya's school operations platform. Built for teachers, by people who care about education.
           </p>
+          {/* Contact button in footer */}
+          <button
+            onClick={() => setShowContact(true)}
+            style={{
+              marginTop: 16, display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '9px 16px', borderRadius: 8,
+              background: 'rgba(0,200,150,.1)', border: '1px solid rgba(0,200,150,.22)',
+              color: 'var(--mint)', fontFamily: "'Sora',sans-serif",
+              fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            📬 Contact Us
+          </button>
         </div>
         {[
           { h: 'Product', links: ['Attendance', 'Parent SMS', 'Reports', 'Analytics'] },
@@ -445,18 +381,25 @@ export default function Landing() {
               {col.h}
             </h4>
             {col.links.map(l => (
-              <a key={l} href="#" style={{ display: 'block', fontSize: 13, color: 'rgba(255,255,255,.5)', textDecoration: 'none', marginBottom: 10 }}>
+              <a
+                key={l}
+                href="#"
+                onClick={l === 'Contact' ? (e) => { e.preventDefault(); setShowContact(true); } : undefined}
+                style={{ display: 'block', fontSize: 13, color: 'rgba(255,255,255,.5)', textDecoration: 'none', marginBottom: 10 }}
+              >
                 {l}
               </a>
             ))}
           </div>
         ))}
       </footer>
+
       <div className="bottom-bar">
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>© 2025 SAMUHIA BUSINESSES. Made with love in Kenya.</p>
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>Platform free · Pay only for SMS</p>
       </div>
 
+      {/* Contact modal */}
       <ContactUs isOpen={showContact} onClose={() => setShowContact(false)} />
     </div>
   );
