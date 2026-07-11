@@ -99,7 +99,7 @@ export default function MpesaTopUpModal({
     setStep("waiting");
     try {
       const result = await initiateSmsTopUp({
-        phone:      `0${phone}`,   // phone input is without leading 0
+        phone:      `${phone}`,   // phone input is without leading 0
         tokens:     selectedTokens,
         amountKes:  selectedKes,
         tier,
@@ -188,7 +188,7 @@ export default function MpesaTopUpModal({
               <div style={{ position: "relative" }}>
                 <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "var(--text-2)", fontWeight: 500 }}>+254</span>
                 <input className="form-input" type="tel" placeholder="7XX XXX XXX" value={phone} style={{ paddingLeft: 52 }}
-                  onChange={e => setPhone(e.target.value.replace(/[^0-9]/g, ""))} />
+                  onChange={e => setPhone(e.target.value.replace(/[^0-9]/g, "").replace(/^0+/, ""))} />
               </div>
               <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}>You'll receive an M-Pesa STK push to confirm the payment.</div>
             </div>

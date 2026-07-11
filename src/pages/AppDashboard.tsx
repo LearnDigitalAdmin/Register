@@ -29,7 +29,7 @@ import WeeklyReportModal from '../components/WeeklyReportModal';
 import ContactUs, { ContactButton } from '../components/ContactUs';
 
 // with the other useState declarations
-const [showContact, setShowContact] = useState(false);
+
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
 const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: 'A', late: 'L', excused: 'E' };
@@ -220,6 +220,7 @@ function MobileDrawerNav({
 }) {
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const [showContact, setShowContact] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
@@ -359,6 +360,7 @@ export default function AppDashboard() {
   const navigate = useNavigate();
   const { toast, ToastEl } = useToast();
   const [panel, setPanel] = useState<Panel>('overview');
+  const [showContact, setShowContact] = useState(false);
 
   const [students,        setStudents]        = useState<Student[]>([]);
   const [attendance,      setAttendance]      = useState<Record<string, AttendanceStatus>>({});

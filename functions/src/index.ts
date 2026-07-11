@@ -65,6 +65,7 @@ interface SendSmsResponse {
  
 function normalizeSmsPhone(raw: string): string {
   const clean = raw.replace(/[\s\-\+]/g, "");
+  if (clean.startsWith("2540"))                        return "254" + clean.substring(4);
   if (clean.startsWith("254"))                         return clean;
   if (clean.startsWith("0"))                           return "254" + clean.substring(1);
   if (clean.startsWith("7") || clean.startsWith("1")) return "254" + clean;

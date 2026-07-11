@@ -4,14 +4,13 @@ import { getFirestore } from "firebase/firestore";
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBSQJAnled1_jZb9h_uBT10pKfg0gumwc4",
-  authDomain: "learn-000111.firebaseapp.com",
-  databaseURL: "https://learn-000111-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "learn-000111",
-  storageBucket: "learn-000111.appspot.com",
-  messagingSenderId: "446897435741",
-  appId: "1:446897435741:web:1f217252605854031e09b4",
-  measurementId: "G-6WZ9QDSVFG"
+  apiKey: "AIzaSyAQ2m7ywT5UktHvKi7cp1nFd5f_97Tdc28",
+  authDomain: "my-register-728ff.firebaseapp.com",
+  projectId: "my-register-728ff",
+  storageBucket: "my-register-728ff.firebasestorage.app",
+  messagingSenderId: "743321098039",
+  appId: "1:743321098039:web:c029899bbbd8edcf53ecb2",
+  measurementId: "G-8GTLD00Z4X"
 };
 
 const app = initializeApp(firebaseConfig);

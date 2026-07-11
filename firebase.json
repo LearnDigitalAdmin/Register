@@ -8,7 +8,6 @@
 
   
   "hosting": {
-    "site": "register101",
     "public": "dist",
     "ignore": [
       "firebase.json",
