@@ -349,4 +349,73 @@ export interface ArchivedStudent {
   years: ArchivedYearRecord[];   // one entry per academic year the student was enrolled
 }
 
+// ─── Bulk student import ────────────────────────────────────────────────────
+
+/** Canonical field keys the importer can map spreadsheet columns onto. */
+export type ImportFieldKey =
+  | 'admissionNo'
+  | 'name'
+  | 'classCode'
+  | 'parentName'
+  | 'parentPhone'
+  | 'parentWhatsApp'
+  | 'nationalId';
+
+/** Which import fields are mandatory vs optional. */
+export const IMPORT_REQUIRED_FIELDS: ImportFieldKey[] = ['admissionNo', 'name', 'classCode'];
+export const IMPORT_OPTIONAL_FIELDS: ImportFieldKey[] = ['parentName', 'parentPhone', 'parentWhatsApp', 'nationalId'];
+
+export const IMPORT_FIELD_LABELS: Record<ImportFieldKey, string> = {
+  admissionNo:    'Admission No.',
+  name:           'Student Name',
+  classCode:      'Class',
+  parentName:     'Parent / Guardian Name',
+  parentPhone:    'Parent Phone (SMS)',
+  parentWhatsApp: 'Parent WhatsApp',
+  nationalId:     'National ID / Birth Cert No.',
+};
+
+/** A saved column-mapping preset for a school, so the next import remembers it. */
+export interface ImportColumnMapping {
+  id: string;                 // = schoolId, doc id
+  schoolId: string;
+  /** spreadsheet column header -> canonical field key */
+  mapping: Partial<Record<ImportFieldKey, string>>;
+  updatedAt: string;
+}
+
+export type ImportRowIssueType =
+  | 'missing_admission_no'
+  | 'missing_name'
+  | 'invalid_phone'
+  | 'duplicate_admission_no'
+  | 'duplicate_student'
+  | 'unknown_class'
+  | 'invalid_stream'
+  | 'unknown_academic_year';
+
+export interface ImportRowIssue {
+  type: ImportRowIssueType;
+  field?: ImportFieldKey;
+  message: string;
+}
+
+/** One parsed spreadsheet row, carried through mapping → validation → import. */
+export interface ImportRow {
+  rowIndex: number;            // 1-based row number in the source file (excluding header)
+  values: Partial<Record<ImportFieldKey, string>>;
+  issues: ImportRowIssue[];
+  /** True once the row has no blocking issues and is ready to import. */
+  isValid: boolean;
+  /** User chose to skip this row even if it's otherwise valid. */
+  excluded?: boolean;
+}
+
+export interface ImportSummary {
+  imported: number;
+  skipped: number;
+  duplicate: number;
+  missingAdmissionNo: number;
+  failed: number;
+}
 

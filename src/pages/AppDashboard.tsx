@@ -11,7 +11,7 @@ import {
   sanitiseSmsText,
   getSmsTier, KES_RATE_PER_TOKEN,
   TOKEN_PACKAGES, tokensToKes,
-  ClassStructure,
+  ClassStructure, ImportSummary,
 } from '../types';
 import { getClassStructure } from '../services/academicYearService';
 import { createEnrolment } from '../services/enrolmentService';
@@ -35,6 +35,7 @@ import ChangeSchoolDialog from '../components/ChangeSchoolDialog';
 // at the top with other imports
 import ContactUs, { ContactButton } from '../components/ContactUs';
 import AcademicYearPanel from '../components/AcademicYearPanel';
+import StudentImportWizard from '../components/StudentImportWizard';
 
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
@@ -380,6 +381,7 @@ export default function AppDashboard() {
   const [loading,         setLoading]         = useState(true);
   const [showAddStudent,  setShowAddStudent]  = useState(false);
   const [newStudent,      setNewStudent]      = useState({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
+  const [showImportWizard, setShowImportWizard] = useState(false);
 
   const [msgBody,     setMsgBody]     = useState('');
   const [msgType,     setMsgType]     = useState('notice');
@@ -994,10 +996,24 @@ export default function AppDashboard() {
               <div className="page-actions">
                 <div className="search-bar"><input type="text" placeholder="Search..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
                 <button className="btn-secondary" onClick={() => setTransferDialog({ mode: 'in' })}>↘ Transfer In</button>
+                <button className="btn-secondary" onClick={() => setShowImportWizard(true)}>⬆ Import</button>
                 <button className="btn-primary" onClick={() => setShowAddStudent(true)}>+ Add Student</button>
               </div>
             </div>
             <div className="page-body">
+              {showImportWizard && (
+                <StudentImportWizard
+                  schoolId={schoolId}
+                  classStructure={classStructure}
+                  activeAcademicYearId={activeAcademicYearId || null}
+                  existingStudents={students}
+                  onClose={() => setShowImportWizard(false)}
+                  onImported={(summary: ImportSummary) => {
+                    if (summary.imported > 0) loadStudents();
+                    toast(`✅ ${summary.imported} Imported · ${summary.skipped} Skipped · ${summary.duplicate} Duplicate · ${summary.missingAdmissionNo} Missing Admission No.`);
+                  }}
+                />
+              )}
               {showAddStudent && (
                 <div className="card" style={{ marginBottom: 24, border: '2px solid var(--mint)' }}>
                   <div className="card-header">

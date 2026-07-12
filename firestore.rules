@@ -138,6 +138,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/schools/$(request.resource.data.schoolId)).data.adminUid == request.auth.uid;
       allow delete: if false;
     }
+    // Saved column-mapping preset per school for the bulk student importer (doc id = schoolId).
+    match /importMappings/{schoolId} {
+      allow read: if request.auth != null;
+      allow write: if isSchoolAdminOf(schoolId);
+    }
     match /students/{id} {
       allow read: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
       allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
