@@ -9,7 +9,17 @@ export interface UserProfile {
   role: UserRole;
   schoolId: string;
   schoolName: string;
+  /** @deprecated kept for backward compatibility with existing accounts/queries — use `assignedClasses`.
+   * Always kept in sync as assignedClasses[0] (or unset for whole-school teachers). */
   classCode?: string;
+  /**
+   * Classes this teacherAdmin currently teaches. Absent/empty = whole-school access
+   * (e.g. a deputy-style teacher admin). A schoolAdmin ignores this — it always has
+   * full-school access regardless of this field.
+   */
+  assignedClasses?: string[];
+  /** Class this teacher was last viewing in the dashboard (persisted so it survives a refresh). */
+  lastActiveClass?: string;
   createdAt: string;
   messageTokens: number;
 }
@@ -72,6 +82,87 @@ export interface Enrolment {
   classCode: string;            // resolved class for that year, e.g. 'Grade 5A'
   status: EnrolmentStatus;
   createdAt: string;
+  /** True when this student is repeating the level they were in during the previous academic year. */
+  isRepeater?: boolean;
+  /** classCode this enrolment repeats from, if isRepeater. Informational only. */
+  repeatingClassCode?: string;
+  /** Set when this enrolment was closed out by a transfer (any kind) rather than promotion/graduation. */
+  closedByTransferId?: string;
+  /** ISO timestamp this enrolment stopped being the student's active one, if applicable. */
+  closedAt?: string;
+}
+
+export type TransferType =
+  | 'transfer_in'        // new student joining from another school
+  | 'transfer_out'       // student leaving to another school
+  | 'internal_class'     // same level, moved to a different class/stream within school
+  | 'internal_stream'    // alias of internal_class, kept distinct for reporting clarity
+  | 'cross_year';         // transfer recorded against a different (usually prior) academic year
+
+export type TransferStatus = 'completed' | 'reversed';
+
+/**
+ * Immutable audit record of a single student transfer. Never edited after creation —
+ * a reversal creates its own compensating record rather than mutating this one, so
+ * transfer history is always fully preserved.
+ */
+export interface TransferRecord {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  studentName: string;
+  admissionNo: string;
+  type: TransferType;
+  academicYearId: string;
+  fromClassCode?: string;
+  toClassCode?: string;
+  fromSchoolId?: string;    // for transfer_in: the school the student is coming from (free text, may be unknown)
+  toSchoolId?: string;      // for transfer_out: destination school (free text, may be unknown)
+  fromEnrolmentId?: string;
+  toEnrolmentId?: string;
+  reason?: string;
+  status: TransferStatus;
+  performedBy: string;      // uid
+  performedAt: string;
+}
+
+/**
+ * Explicit teacher-to-class assignment, separate from `UserProfile.assignedClasses` so
+ * assignment history (who was assigned what, and when it ended) is preserved even after
+ * a teacher is moved or removed. One doc per (teacherUid, schoolId, classCode) triple.
+ */
+export interface TeacherAssignment {
+  id: string;               // `${schoolId}_${teacherUid}_${classCode}`
+  schoolId: string;
+  teacherUid: string;
+  teacherName: string;
+  classCode: string;
+  assignedAt: string;
+  assignedBy: string;       // uid of the admin who made the assignment
+  active: boolean;
+  endedAt?: string;
+  endedReason?: 'removed' | 'class_transfer' | 'stream_transfer' | 'school_transfer';
+}
+
+export type TeacherTransferType = 'class_transfer' | 'stream_transfer' | 'school_transfer';
+
+/**
+ * Immutable log of a teacher moving classes, streams, or schools. School transfers revoke all
+ * access/assignments at the old school, but this record (and the assignment history above)
+ * is preserved permanently as the historical activity trail.
+ */
+export interface TeacherTransferRecord {
+  id: string;
+  teacherUid: string;
+  teacherName: string;
+  type: TeacherTransferType;
+  fromSchoolId: string;
+  toSchoolId: string;        // same as fromSchoolId unless type === 'school_transfer'
+  fromClasses: string[];
+  toClasses: string[];
+  performedBy: string;       // uid of the admin who performed the transfer
+  performedAt: string;
+  reason?: string;
 }
 
 export interface School {

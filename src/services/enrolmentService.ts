@@ -58,3 +58,23 @@ export async function getClassRoster(schoolId: string, academicYearId: string, c
 export async function updateEnrolmentStatus(id: string, status: EnrolmentStatus): Promise<void> {
   await updateDoc(doc(db, 'enrolments', id), { status });
 }
+
+/**
+ * Mark a student's CURRENT enrolment as a repeater mid-year (as opposed to the promotion
+ * wizard's end-of-year 'repeat' action). Does not move the student to a new class — repeaters
+ * stay in their existing enrolment/classCode; a stream change, if any, goes through
+ * transferService's internal transfer instead so it's captured in transfer history too.
+ */
+export async function markEnrolmentAsRepeater(enrolmentId: string, repeatingClassCode: string): Promise<void> {
+  await updateDoc(doc(db, 'enrolments', enrolmentId), {
+    isRepeater: true,
+    repeatingClassCode,
+  });
+}
+
+export async function unmarkEnrolmentAsRepeater(enrolmentId: string): Promise<void> {
+  await updateDoc(doc(db, 'enrolments', enrolmentId), {
+    isRepeater: false,
+    repeatingClassCode: null,
+  });
+}

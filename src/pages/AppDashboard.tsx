@@ -28,6 +28,10 @@ import MpesaTopUpModal from '../components/MpesaTopUpModal';
 import StudentProfileModal from '../components/StudentProfileModal';
 import TermlyReportModal from '../components/TermlyReportModal';
 import WeeklyReportModal from '../components/WeeklyReportModal';
+import ClassSwitcher from '../components/ClassSwitcher';
+import TransferDialog from '../components/TransferDialog';
+import AssignmentManager from '../components/AssignmentManager';
+import ChangeSchoolDialog from '../components/ChangeSchoolDialog';
 // at the top with other imports
 import ContactUs, { ContactButton } from '../components/ContactUs';
 import AcademicYearPanel from '../components/AcademicYearPanel';
@@ -391,6 +395,9 @@ export default function AppDashboard() {
   const [showTermly,        setShowTermly]        = useState(false);
   const [showWeekly,        setShowWeekly]        = useState(false);
   const [showStudentProfile,setShowStudentProfile]= useState(false);
+  const [transferDialog, setTransferDialog] = useState<{ mode: 'in' | 'out' | 'internal'; student?: Student } | null>(null);
+  const [showAssignmentManager, setShowAssignmentManager] = useState(false);
+  const [showChangeSchool, setShowChangeSchool] = useState(false);
 
   const [schoolInfo,     setSchoolInfo]     = useState<SchoolInfo | null>(null);
   const [settingsPhone,  setSettingsPhone]  = useState('');
@@ -399,7 +406,41 @@ export default function AppDashboard() {
 
   const isAdmin   = userProfile?.role === 'schoolAdmin';
   const schoolId  = userProfile?.schoolId || '';
-  const classCode = userProfile?.classCode || 'Class';
+  const myAssignedClasses = userProfile?.assignedClasses?.length
+    ? userProfile.assignedClasses
+    : (userProfile?.classCode ? [userProfile.classCode] : []);
+  // The class currently being viewed. Admins default to the whole school; teachers default to
+  // their last-active or first assigned class. Switching this immediately re-drives
+  // attendance/students/reports/messaging/analytics below since they all read from this same
+  // state — no reload needed.
+  const [activeClassCode, setActiveClassCode] = useState<string>(
+    userProfile?.role === 'schoolAdmin' ? 'All School' : (userProfile?.lastActiveClass || userProfile?.classCode || myAssignedClasses[0] || 'Class')
+  );
+  // Re-derive the active class when a *different* user profile loads (e.g. sign-in completes
+  // asynchronously after this component's first render) — the React-recommended pattern for
+  // adjusting state when a dependency changes, rather than a useEffect that calls setState.
+  const [lastProfileKey, setLastProfileKey] = useState(`${userProfile?.uid}::${userProfile?.schoolId}`);
+  const profileKey = `${userProfile?.uid}::${userProfile?.schoolId}`;
+  if (profileKey !== lastProfileKey) {
+    setLastProfileKey(profileKey);
+    if (userProfile?.role === 'schoolAdmin') {
+      setActiveClassCode('All School');
+    } else {
+      const preferred = userProfile?.lastActiveClass || userProfile?.classCode || myAssignedClasses[0];
+      setActiveClassCode(preferred || 'Class');
+    }
+  }
+  function switchActiveClass(next: string) {
+    setActiveClassCode(next);
+    if (userProfile?.uid && next !== 'All School') {
+      updateDoc(doc(db, 'users', userProfile.uid), { lastActiveClass: next }).catch(() => {});
+    }
+  }
+  const classCode = activeClassCode;
+  // The roster scoped to whatever is currently active — 'All School' (admins only) shows
+  // everyone; otherwise only students in that specific class. This is what every panel
+  // (Students table, Register, Overview stats) should read instead of the raw `students` list.
+  const scopedStudents = activeClassCode === 'All School' ? students : students.filter(s => s.classCode === activeClassCode);
   const tokens    = userProfile?.messageTokens ?? 0;
   const tier      = getSmsTier(students.length);
   const kesRate   = KES_RATE_PER_TOKEN[tier];
@@ -609,7 +650,7 @@ export default function AppDashboard() {
     } catch (e: any) { toast('❌ ' + e.message); }
   }
 
-  const filteredStudents = students.filter(s => {
+  const filteredStudents = scopedStudents.filter(s => {
     const q = searchQ.toLowerCase();
     const matchQ = !q || s.name.toLowerCase().includes(q) || s.admissionNo.toLowerCase().includes(q);
     const matchF = attFilter === 'all' || attendance[s.id] === attFilter;
@@ -698,6 +739,15 @@ export default function AppDashboard() {
         <div className="sidebar-school">
           <span>{userProfile.role === 'schoolAdmin' ? '🏫 School Admin' : '👩‍🏫 Teacher'}</span>
           <strong>{userProfile.schoolName}</strong>
+          <div style={{ marginTop: 8 }}>
+            <ClassSwitcher
+              activeClass={activeClassCode}
+              classes={isAdmin ? (classStructure?.classes || []) : myAssignedClasses}
+              onSwitch={switchActiveClass}
+              isAdmin={isAdmin}
+              allSchoolLabel={isAdmin ? 'All School' : undefined}
+            />
+          </div>
         </div>
         <nav className="sidebar-nav">
           <div className="sidebar-section-label">Navigation</div>
@@ -734,7 +784,7 @@ export default function AppDashboard() {
             <div className="page-body">
               <div className="stats-grid">
                 {[
-                  { label: 'Total Students', value: students.length, sub: classCode, color: 'var(--ink)' },
+                  { label: 'Total Students', value: scopedStudents.length, sub: classCode, color: 'var(--ink)' },
                   { label: 'Present Today', value: counts.present, sub: `${rate}% rate`, color: 'var(--mint-d)' },
                   { label: 'Absent Today', value: counts.absent, sub: 'need notification', color: 'var(--red)' },
                   { label: 'SMS Tokens', value: tokens, sub: `KES ${kesRate}/token · ${tier}`, color: '#c4800a' },
@@ -940,9 +990,10 @@ export default function AppDashboard() {
         {panel === 'students' && (
           <>
             <div className="page-header">
-              <div><div className="page-title">Students</div><div className="page-sub">{classCode} · {students.length} students</div></div>
+              <div><div className="page-title">Students</div><div className="page-sub">{classCode} · {scopedStudents.length} students</div></div>
               <div className="page-actions">
                 <div className="search-bar"><input type="text" placeholder="Search..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
+                <button className="btn-secondary" onClick={() => setTransferDialog({ mode: 'in' })}>↘ Transfer In</button>
                 <button className="btn-primary" onClick={() => setShowAddStudent(true)}>+ Add Student</button>
               </div>
             </div>
@@ -980,7 +1031,7 @@ export default function AppDashboard() {
                   <table>
                     <thead><tr><th>#</th><th>Student Name</th><th>Admission No.</th><th>Parent</th><th>Phone (SMS)</th><th>Today</th><th>Actions</th></tr></thead>
                     <tbody>
-                      {students.filter(s => !searchQ || s.name.toLowerCase().includes(searchQ.toLowerCase()) || s.admissionNo.toLowerCase().includes(searchQ.toLowerCase())).map((s, i) => (
+                      {scopedStudents.filter(s => !searchQ || s.name.toLowerCase().includes(searchQ.toLowerCase()) || s.admissionNo.toLowerCase().includes(searchQ.toLowerCase())).map((s, i) => (
                         <tr key={s.id}>
                           <td style={{ color: 'var(--text-3)' }}>{i + 1}</td>
                           <td className="td-name">{s.name}</td>
@@ -997,13 +1048,15 @@ export default function AppDashboard() {
                             <button className="btn-xs btn-xs-gray" onClick={() => {
                               setShowStudentProfile(true);
                             }} title="View profile">Profile</button>
+                            <button className="btn-xs btn-xs-gray" onClick={() => setTransferDialog({ mode: 'internal', student: s })} title="Move to another class/stream">Move</button>
+                            <button className="btn-xs btn-xs-gray" onClick={() => setTransferDialog({ mode: 'out', student: s })} title="Transfer to another school">Out</button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <div className="card-footer"><span style={{ fontSize: 13, color: 'var(--text-2)' }}>Showing {students.length} students</span></div>
+                <div className="card-footer"><span style={{ fontSize: 13, color: 'var(--text-2)' }}>Showing {scopedStudents.length} students</span></div>
               </div>
             </div>
           </>
@@ -1060,7 +1113,7 @@ export default function AppDashboard() {
                     <div className="form-group">
                       <label className="form-label">Send To</label>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {['All School', classCode, ...(isAdmin ? (classStructure?.classes.filter(c => c !== classCode) || []) : [])].map(c => (
+                        {[...new Set(['All School', classCode, ...(isAdmin ? (classStructure?.classes || []) : [])])].map(c => (
                           <div key={c} className={`chip${msgTo === c ? ' active' : ''}`} onClick={() => setMsgTo(c)}>{c}</div>
                         ))}
                       </div>
@@ -1406,6 +1459,16 @@ export default function AppDashboard() {
                       ))}
                     </div>
                     <div className="notice notice-info">ℹ️ Both email and phone link to your account. Sign in with either.</div>
+                    {isAdmin && (
+                      <button className="btn-secondary" style={{ marginTop: 14 }} onClick={() => setShowAssignmentManager(true)}>
+                        👩‍🏫 Manage Teacher Assignments & Transfers →
+                      </button>
+                    )}
+                    {!isAdmin && (
+                      <button className="btn-secondary" style={{ marginTop: 14 }} onClick={() => setShowChangeSchool(true)}>
+                        🏫 Change School →
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1475,6 +1538,8 @@ export default function AppDashboard() {
         schoolId={schoolId}
         schoolName={userProfile.schoolName}
         academicYearId={activeAcademicYearId}
+        defaultClassCode={activeClassCode}
+        classOptions={isAdmin ? (classStructure?.classes || []) : myAssignedClasses}
       />
 
       <WeeklyReportModal
@@ -1483,6 +1548,8 @@ export default function AppDashboard() {
         schoolId={schoolId}
         schoolName={userProfile.schoolName}
         academicYearId={activeAcademicYearId}
+        defaultClassCode={activeClassCode}
+        classOptions={isAdmin ? (classStructure?.classes || []) : myAssignedClasses}
       />
 
       <StudentProfileModal
@@ -1493,6 +1560,36 @@ export default function AppDashboard() {
         students={students}
         academicYearId={activeAcademicYearId}
       />
+
+      {transferDialog && (
+        <TransferDialog
+          mode={transferDialog.mode === 'internal' ? 'internal' : transferDialog.mode}
+          schoolId={schoolId}
+          classStructure={classStructure}
+          performedBy={userProfile.uid}
+          activeAcademicYearId={activeAcademicYearId}
+          student={transferDialog.student}
+          onClose={() => setTransferDialog(null)}
+          onDone={async () => { setTransferDialog(null); await loadStudents(); toast('✅ Transfer recorded.'); }}
+        />
+      )}
+
+      {showAssignmentManager && isAdmin && (
+        <AssignmentManager
+          schoolId={schoolId}
+          classStructure={classStructure}
+          currentAdminUid={userProfile.uid}
+          onClose={() => setShowAssignmentManager(false)}
+        />
+      )}
+
+      {showChangeSchool && !isAdmin && (
+        <ChangeSchoolDialog
+          teacher={userProfile}
+          onClose={() => setShowChangeSchool(false)}
+          onDone={async () => { setShowChangeSchool(false); await refreshProfile(); toast('✅ Moved to your new school.'); }}
+        />
+      )}
 
       {/* ── MOBILE DRAWER NAV ─────────────────────────────────────────── */}
       <MobileDrawerNav

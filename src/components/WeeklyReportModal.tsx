@@ -22,6 +22,10 @@ interface Props {
   schoolId:   string;
   schoolName: string;
   academicYearId?: string;
+  /** The class currently active in the dashboard (from the class switcher) — used as the default scope. */
+  defaultClassCode?: string;
+  /** Classes the viewer may choose between. Omit to hide the scope selector entirely (single-class view). */
+  classOptions?: string[];
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -145,11 +149,18 @@ function ClassWeekCard({ cls }: { cls: WeeklyClassSummary }) {
 
 // ─── Main modal ────────────────────────────────────────────────────────────────
 
-export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolName, academicYearId }: Props) {
+export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolName, academicYearId, defaultClassCode, classOptions }: Props) {
   const [refDate,  setRefDate]  = useState(new Date());
   const [summary,  setSummary]  = useState<WeeklySummary | null>(null);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
+  const [classScope, setClassScope] = useState(defaultClassCode && defaultClassCode !== 'All School' ? defaultClassCode : 'All School');
+
+  // Keep the scope in sync with the dashboard's active class whenever the modal (re)opens.
+  useEffect(() => {
+    if (isOpen) setClassScope(defaultClassCode && defaultClassCode !== 'All School' ? defaultClassCode : 'All School');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Keep refs so fetchSummary needs zero reactive deps
   const refDateRef    = useRef(refDate);
@@ -160,13 +171,19 @@ export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolNam
   schoolNameRef.current = schoolName;
   const academicYearIdRef = useRef(academicYearId);
   academicYearIdRef.current = academicYearId;
+  const classScopeRef = useRef(classScope);
+  classScopeRef.current = classScope;
 
   // Stable function — empty deps, reads everything via refs
   const fetchSummary = useCallback(async () => {
     if (!schoolIdRef.current) return;
     setLoading(true); setError('');
     try {
-      const s = await generateWeeklySummary(schoolIdRef.current, schoolNameRef.current, refDateRef.current, academicYearIdRef.current);
+      const scope = classScopeRef.current;
+      const s = await generateWeeklySummary(
+        schoolIdRef.current, schoolNameRef.current, refDateRef.current, academicYearIdRef.current,
+        scope === 'All School' ? undefined : scope,
+      );
       setSummary(s);
     } catch (e: any) {
       setError(e.message || 'Failed to load weekly summary.');
@@ -181,11 +198,11 @@ export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolNam
     fetchSummary();
   }, [isOpen]); // ← only isOpen
 
-  // Re-fetch when the user navigates weeks
+  // Re-fetch when the user navigates weeks or changes the class scope
   useEffect(() => {
     if (!isOpen) return;
     fetchSummary();
-  }, [refDate]); // ← new Date() object only created when user clicks ← →
+  }, [refDate, classScope]); // ← new Date() object only created when user clicks ← →
 
   if (!isOpen) return null;
 
@@ -241,7 +258,18 @@ export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolNam
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {classOptions && classOptions.length > 0 && (
+              <select
+                className="form-input"
+                style={{ padding: '6px 10px', fontSize: 12, height: 'auto' }}
+                value={classScope}
+                onChange={e => setClassScope(e.target.value)}
+              >
+                <option value="All School">All School</option>
+                {classOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
             {summary && summary.classes.length > 0 && (
               <button
                 className="btn-secondary"

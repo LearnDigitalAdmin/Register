@@ -31,6 +31,10 @@ interface Props {
   schoolId:   string;
   schoolName: string;
   academicYearId?: string;
+  /** The class currently active in the dashboard (from the class switcher) — used as the default scope. */
+  defaultClassCode?: string;
+  /** Classes the viewer may choose between. Omit to hide the scope selector entirely (single-class view). */
+  classOptions?: string[];
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -134,7 +138,7 @@ function ClassBlock({ cls, defaultOpen }: { cls: TermlyClassSummary; defaultOpen
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
-export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolName, academicYearId }: Props) {
+export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolName, academicYearId, defaultClassCode, classOptions }: Props) {
   const currentYear = new Date().getFullYear();
   const years       = [currentYear, currentYear - 1];
 
@@ -145,6 +149,13 @@ export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolNam
   const [error,     setError]     = useState('');
   const [activeTab, setActiveTab] = useState<'classes' | 'absentees'>('classes');
   const [expandAll, setExpandAll] = useState(false);
+  const [classScope, setClassScope] = useState(defaultClassCode && defaultClassCode !== 'All School' ? defaultClassCode : 'All School');
+
+  // Keep the scope in sync with the dashboard's active class whenever the modal (re)opens.
+  useEffect(() => {
+    if (isOpen) setClassScope(defaultClassCode && defaultClassCode !== 'All School' ? defaultClassCode : 'All School');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // ── Keep a ref to the current preset so fetchReport never needs it as a dep ──
   const presets   = buildTermPresets(year);
@@ -156,17 +167,20 @@ export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolNam
   schoolIdRef.current = schoolId;
   const schoolNameRef = useRef(schoolName);
   schoolNameRef.current = schoolName;
+  const classScopeRef = useRef(classScope);
+  classScopeRef.current = classScope;
 
   // ── fetchReport reads everything from refs — zero reactive deps ────────────
   const fetchReport = useCallback(async () => {
     const { start, end, label } = presetRef.current;
     const sid  = schoolIdRef.current;
     const sname = schoolNameRef.current;
+    const scope = classScopeRef.current;
     if (!sid) return;
     setLoading(true);
     setError('');
     try {
-      const r = await generateTermlyReport(sid, sname, start, end, label, 80, academicYearId);
+      const r = await generateTermlyReport(sid, sname, start, end, label, 80, academicYearId, scope === 'All School' ? undefined : scope);
       setReport(r);
     } catch (e: any) {
       setError(e.message || 'Failed to generate report.');
@@ -185,11 +199,11 @@ export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolNam
     fetchReport();
   }, [isOpen]); // ← only isOpen; fetchReport is stable so safe to omit
 
-  // ── Re-fetch when year or term changes (explicit user action) ─────────────
+  // ── Re-fetch when year, term, or class scope changes (explicit user action) ─
   useEffect(() => {
     if (!isOpen) return;
     fetchReport();
-  }, [year, termIdx]); // ← primitive values — stable, no object-identity issues
+  }, [year, termIdx, classScope]); // ← primitive values — stable, no object-identity issues
 
   if (!isOpen) return null;
 
@@ -240,6 +254,20 @@ export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolNam
               ))}
             </div>
           </div>
+          {classOptions && classOptions.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 5 }}>Class</div>
+              <select
+                className="form-input"
+                style={{ padding: '6px 10px', fontSize: 13, height: 'auto' }}
+                value={classScope}
+                onChange={e => setClassScope(e.target.value)}
+              >
+                <option value="All School">All School</option>
+                {classOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginLeft: 'auto' }}>
             <button
               className="btn-secondary"

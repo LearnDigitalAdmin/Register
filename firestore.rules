@@ -22,6 +22,38 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // ── Register app permission hierarchy ───────────────────────
+    // schoolAdmin: full access within their own school.
+    // teacherAdmin: only their assigned class(es) within their own school
+    // (an empty/absent assignedClasses list means whole-school access, e.g. a deputy).
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function myRole() {
+      return myProfile().role;
+    }
+    function mySchoolId() {
+      return myProfile().schoolId;
+    }
+    function myAssignedClasses() {
+      return myProfile().get('assignedClasses', []);
+    }
+    function isSchoolAdminOf(schoolId) {
+      return isSignedIn() && myRole() == 'schoolAdmin' && mySchoolId() == schoolId;
+    }
+    function isTeacherOf(schoolId, classCode) {
+      return isSignedIn() && myRole() == 'teacherAdmin' && mySchoolId() == schoolId &&
+        (myAssignedClasses().size() == 0 || classCode in myAssignedClasses());
+    }
+    // Any signed-in member (admin or teacher) of a school — used where access isn't class-scoped
+    // (e.g. messaging, which can target a single class or the whole school).
+    function isSchoolMember(schoolId) {
+      return isSchoolAdminOf(schoolId) || (isSignedIn() && myRole() == 'teacherAdmin' && mySchoolId() == schoolId);
+    }
+    function hasClassAccess(schoolId, classCode) {
+      return isSchoolAdminOf(schoolId) || isTeacherOf(schoolId, classCode);
+    }
+
     // ── users ────────────────────────────────────────────────
     // Any signed-in user can read profiles (needed for league tables,
     // fixture displays, etc.). Only the owner or an admin can write.
@@ -107,21 +139,78 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /students/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+      // Update: need access via the class the student is currently in OR the class they're
+      // moving to, so a transfer/internal-move by an authorised teacher/admin isn't blocked.
+      allow update: if hasClassAccess(resource.data.schoolId, resource.data.classCode) ||
+                       hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+      allow delete: if false; // never delete a student record — preserves history
     }
     // References a student + academic year rather than being embedded on the student doc,
     // so a student can have one row per year without ever overwriting prior years.
     match /enrolments/{id} {
-      allow read, write: if request.auth != null;
+      allow read: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+      allow update: if hasClassAccess(resource.data.schoolId, resource.data.classCode) ||
+                       hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+      allow delete: if false; // enrolments are closed out (status change), never deleted
     }
     match /attendance/{id} {
-      allow read, write: if request.auth != null;
+      allow read:   if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+      allow update: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow delete: if false; // attendance history is never deleted, including across transfers
     }
     match /registers/{id} {
-      allow read, write: if request.auth != null;
+      allow read:   if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+      allow update: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow delete: if false;
     }
     match /messages/{id} {
-      allow read, write: if request.auth != null;
+      allow read:   if resource != null && isSchoolMember(resource.data.schoolId);
+      allow create: if isSchoolMember(request.resource.data.schoolId);
+      allow update, delete: if false; // sent messages are an immutable log
+    }
+    // Immutable audit trail of every student transfer (in/out/internal/stream/cross-year).
+    // Never updated or deleted — a reversal writes its own compensating record instead.
+    match /transfers/{id} {
+      allow read:   if resource != null && isSchoolMember(resource.data.schoolId);
+      allow create: if isSchoolMember(request.resource.data.schoolId);
+      allow update, delete: if false;
+    }
+    // A teacher's assignment to a single class. Only the school's admin may assign/unassign;
+    // the teacher themself (or the school's admin) may read their own assignments.
+    match /teacherAssignments/{id} {
+      allow read: if resource != null &&
+        (isSchoolAdminOf(resource.data.schoolId) || request.auth.uid == resource.data.teacherUid);
+      allow create: if isSchoolAdminOf(request.resource.data.schoolId);
+      // Admin can update (re-assign) at their own school. A teacher may ONLY deactivate their
+      // own assignment (as part of a self-service school transfer) — never reactivate one,
+      // touch anyone else's, or change which class/school it points to.
+      allow update: if isSchoolAdminOf(request.resource.data.schoolId) ||
+        (isSignedIn() && myRole() == 'teacherAdmin' && request.auth.uid == resource.data.teacherUid &&
+         request.resource.data.active == false &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'endedAt', 'endedReason']));
+      allow delete: if false; // assignments are deactivated (active:false), never deleted
+    }
+    // Immutable teacher transfer log (class/stream moves are admin-initiated at their own
+    // school; a school transfer can ONLY be initiated by the teacher themself, on their own
+    // account — admins can never move a teacher to another school).
+    match /teacherTransfers/{id} {
+      allow read: if resource != null &&
+        (isSchoolAdminOf(resource.data.fromSchoolId) || request.auth.uid == resource.data.teacherUid);
+      allow create: if
+        (request.resource.data.type != 'school_transfer' &&
+         isSchoolAdminOf(request.resource.data.fromSchoolId) &&
+         get(/databases/$(database)/documents/users/$(request.resource.data.teacherUid)).data.role == 'teacherAdmin')
+        ||
+        (request.resource.data.type == 'school_transfer' &&
+         isSignedIn() && myRole() == 'teacherAdmin' &&
+         request.auth.uid == request.resource.data.teacherUid &&
+         request.resource.data.performedBy == request.auth.uid);
+      allow update, delete: if false;
     }
     // Global (not nested under a school) so a graduate can be looked up regardless of which
     // school they came from — e.g. an employer verifying attendance history. Publicly readable
@@ -140,7 +229,14 @@ service cloud.firestore {
       // allow write: if request.auth.uid == userId || isSuperAdmin(request.auth.uid) || 
       //                 canAddUser(request.auth.uid, request.resource.data.role) || 
       //                 request.auth.uid != userId && request.resource.data.friendRequests.size() < 100;
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId);
+      // A teacherAdmin may only ever edit their own profile. A schoolAdmin may also edit a
+      // teacherAdmin's profile within their own school (needed for assigning/removing classes
+      // and teacher transfers, which update the target teacher's assignedClasses/schoolId).
+      allow update: if isOwner(userId) ||
+        (isSignedIn() && myRole() == 'schoolAdmin' && resource.data.schoolId == mySchoolId());
+      allow delete: if false;
       //allow create: if request.auth != null;
 //       function isAdmin(uid) {
 //         return get(/databases/$(database)/documents/users/$(uid)).data.role in ['superAdmin', 'teacherAdmin', 'tuitionAdmin', 'schoolAdmin'];
@@ -243,10 +339,6 @@ service cloud.firestore {
     }
     
     match /subjects/{subjectId}/certificates/{userUid} {
-        allow read, write: if request.auth != null;
-    }
-    
-    match /schools/{schoolId} {
         allow read, write: if request.auth != null;
     }
     
@@ -557,13 +649,7 @@ match /teams/{teamId} {
     return data.school != null || data.email != null || data.class != null;
   }
   
-  match /messages/{messageId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      allow delete: if request.auth.uid == resource.data.senderId;
-    }
-
-    match /assignments/{assignmentId} {
+  match /assignments/{assignmentId} {
       allow read, write: if request.auth != null;
     }
 

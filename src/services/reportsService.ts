@@ -239,6 +239,7 @@ export async function generateTermlyReport(
   termLabel:   string,
   absenteeThreshold = 80, // % below which student is flagged
   academicYearId?: string,
+  classCodeFilter?: string, // when set, scope the whole report to just this class
 ): Promise<TermlyReport> {
   // Fetch all attendance records for this school in the date range
   const attQ = query(
@@ -252,6 +253,9 @@ export async function generateTermlyReport(
   if (academicYearId) {
     records = records.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
   }
+  if (classCodeFilter) {
+    records = records.filter(r => r.classCode === classCodeFilter);
+  }
 
   // Fetch all registers to know which days had a register (totalDays denominator)
   const regQ = query(
@@ -264,6 +268,9 @@ export async function generateTermlyReport(
   let regDocs = regSnap.docs.map(d => d.data() as RawRegister);
   if (academicYearId) {
     regDocs = regDocs.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
+  }
+  if (classCodeFilter) {
+    regDocs = regDocs.filter(r => r.classCode === classCodeFilter);
   }
   const registerDates = new Set(regDocs.map(r => r.date));
 
@@ -354,6 +361,7 @@ export async function generateWeeklySummary(
   schoolName:   string,
   referenceDate: Date = new Date(),
   academicYearId?: string,
+  classCodeFilter?: string, // when set, scope the whole summary to just this class
 ): Promise<WeeklySummary> {
   const { start, end } = weekBounds(referenceDate);
 
@@ -368,6 +376,9 @@ export async function generateWeeklySummary(
   let registers = regSnap.docs.map(d => d.data() as RawRegister);
   if (academicYearId) {
     registers = registers.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
+  }
+  if (classCodeFilter) {
+    registers = registers.filter(r => r.classCode === classCodeFilter);
   }
 
   // Build all 5 weekdays
