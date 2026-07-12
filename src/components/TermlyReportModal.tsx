@@ -30,6 +30,7 @@ interface Props {
   onClose:    () => void;
   schoolId:   string;
   schoolName: string;
+  academicYearId?: string;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -133,7 +134,7 @@ function ClassBlock({ cls, defaultOpen }: { cls: TermlyClassSummary; defaultOpen
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
-export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolName }: Props) {
+export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolName, academicYearId }: Props) {
   const currentYear = new Date().getFullYear();
   const years       = [currentYear, currentYear - 1];
 
@@ -165,7 +166,7 @@ export default function TermlyReportModal({ isOpen, onClose, schoolId, schoolNam
     setLoading(true);
     setError('');
     try {
-      const r = await generateTermlyReport(sid, sname, start, end, label);
+      const r = await generateTermlyReport(sid, sname, start, end, label, 80, academicYearId);
       setReport(r);
     } catch (e: any) {
       setError(e.message || 'Failed to generate report.');

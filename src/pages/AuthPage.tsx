@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { Curriculum, CURRICULUM_LEVELS, StreamMode } from '../types';
+import { getClassStructure, resolveLevels } from '../services/academicYearService';
 
 type Tab = 'login' | 'signup';
 
@@ -26,9 +28,48 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
 // and the map:
 
   const [suSchoolName, setSuSchoolName] = useState('');
-  const [suSchoolId, setSuSchoolId] = useState(''); // for teachers joining
+  const [suSchoolId, setSuSchoolId] = useState(''); // for teachers joining — the school's KNEC code
   const [suClass, setSuClass] = useState('');
   const [suCounty, setSuCounty] = useState('');
+
+  // School admin — new-school academic setup
+  const [suKnecCode, setSuKnecCode] = useState('');
+  const [suSchoolType, setSuSchoolType] = useState('Primary');
+  const [suCurriculum, setSuCurriculum] = useState<Curriculum>('CBC');
+  const [suStartingClass, setSuStartingClass] = useState('');
+  const [suGraduatingClass, setSuGraduatingClass] = useState('');
+  const [suStreamsEnabled, setSuStreamsEnabled] = useState(false);
+  const [suStreamMode, setSuStreamMode] = useState<StreamMode>('uniform');
+  const [suUniformStreamsText, setSuUniformStreamsText] = useState('A, B');
+  const [suPerClassStreamsText, setSuPerClassStreamsText] = useState<Record<string, string>>({});
+
+  // Teacher joining — fetched class list for the entered KNEC code
+  const [suTeacherClasses, setSuTeacherClasses] = useState<string[] | null>(null);
+  const [suTeacherClassesLoading, setSuTeacherClassesLoading] = useState(false);
+  const [suTeacherClassesError, setSuTeacherClassesError] = useState('');
+
+  const previewLevels = suStartingClass && suGraduatingClass
+    ? (() => { try { return resolveLevels(suCurriculum, suStartingClass, suGraduatingClass); } catch { return []; } })()
+    : [];
+
+  async function lookupTeacherClasses() {
+    if (!suSchoolId.trim()) return;
+    setSuTeacherClassesLoading(true);
+    setSuTeacherClassesError('');
+    setSuTeacherClasses(null);
+    try {
+      const structure = await getClassStructure(suSchoolId);
+      if (!structure) {
+        setSuTeacherClassesError('No school found for that KNEC code. Check the code with your admin.');
+      } else {
+        setSuTeacherClasses(structure.classes);
+      }
+    } catch {
+      setSuTeacherClassesError('Could not look up that school. Check the code and try again.');
+    } finally {
+      setSuTeacherClassesLoading(false);
+    }
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -45,12 +86,27 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
-    setError(''); 
+    setError('');
     if (suPw !== suPw2) { setError('Passwords do not match.'); return; }
     if (suPw.length < 6) { setError('Password must be at least 6 characters.'); return; }
     if (!suPhone && !suEmail) { setError('Please provide an email or phone number.'); return; }
+
+    if (suRole === 'schoolAdmin') {
+      if (!suKnecCode.trim()) { setError('Enter your school\'s KNEC code.'); return; }
+      if (!suStartingClass || !suGraduatingClass) { setError('Select a starting and graduating class.'); return; }
+      if (suStreamsEnabled && suStreamMode === 'uniform' && !suUniformStreamsText.trim()) {
+        setError('Add at least one stream (e.g. A, B).'); return;
+      }
+    }
+
     setLoading(true);
     try {
+      const uniformStreams = suUniformStreamsText.split(',').map(s => s.trim()).filter(Boolean);
+      const perClassStreams: Record<string, string[]> = {};
+      for (const level of previewLevels) {
+        perClassStreams[level] = (suPerClassStreamsText[level] || '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+
       await signUp({
         email: suEmail.trim(),
         phone: suPhone.trim(),
@@ -61,6 +117,15 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
         schoolId: suRole === 'teacherAdmin' ? suSchoolId.trim() : undefined,
         classCode: suRole === 'teacherAdmin' ? suClass.trim() : undefined,
         county: suCounty.trim(),
+        schoolType: suRole === 'schoolAdmin' ? suSchoolType : undefined,
+        knecCode: suRole === 'schoolAdmin' ? suKnecCode.trim() : undefined,
+        curriculum: suRole === 'schoolAdmin' ? suCurriculum : undefined,
+        startingClass: suRole === 'schoolAdmin' ? suStartingClass : undefined,
+        graduatingClass: suRole === 'schoolAdmin' ? suGraduatingClass : undefined,
+        streamsEnabled: suRole === 'schoolAdmin' ? suStreamsEnabled : undefined,
+        streamMode: suRole === 'schoolAdmin' ? suStreamMode : undefined,
+        uniformStreams: suRole === 'schoolAdmin' && suStreamMode === 'uniform' ? uniformStreams : undefined,
+        perClassStreams: suRole === 'schoolAdmin' && suStreamMode === 'perClass' ? perClassStreams : undefined,
       });
       navigate('/app');
     } catch (err: any) {
@@ -184,38 +249,160 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
                     <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
                       type="text" placeholder="Westlands Primary School" value={suSchoolName} onChange={e => setSuSchoolName(e.target.value)} required />
                   </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>
+                      KNEC School Code <span style={{ color: 'rgba(255,255,255,.3)', fontSize: 11, textTransform: 'none', letterSpacing: 0 }}>(your school's unique identifier — this is how teachers join)</span>
+                    </label>
+                    <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', fontFamily: "'DM Mono',monospace" }}
+                      type="text" placeholder="e.g. 12345678" value={suKnecCode} onChange={e => setSuKnecCode(e.target.value.toUpperCase())} required />
+                  </div>
+
                   <div className="form-group">
                     <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>County</label>
-                    
-                      <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
-                        value={suCounty} onChange={e => setSuCounty(e.target.value)}>
-                        <option value="" style={{ background: '#1e2730', color: '#fff' }}>Select county...</option>
-                        
-                          {[
-                            'Baringo','Bomet','Bungoma','Busia','Elgeyo-Marakwet','Embu','Garissa',
-                            'Homa Bay','Isiolo','Kajiado','Kakamega','Kericho','Kiambu','Kilifi',
-                            'Kirinyaga','Kisii','Kisumu','Kitui','Kwale','Laikipia','Lamu','Machakos',
-                            'Makueni','Mandera','Marsabit','Meru','Migori','Mombasa','Murang\'a',
-                            'Nairobi','Nakuru','Nandi','Narok','Nyamira','Nyandarua','Nyeri',
-                            'Samburu','Siaya','Taita-Taveta','Tana River','Tharaka-Nithi','Trans Nzoia',
-                            'Turkana','Uasin Gishu','Vihiga','Wajir','West Pokot'
-                          ].map(c => (
-                            <option key={c} value={c} style={{ background: '#1e2730', color: '#fff' }}>{c}</option>
-                          ))}
-                      </select>
+                    <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                      value={suCounty} onChange={e => setSuCounty(e.target.value)}>
+                      <option value="" style={{ background: '#1e2730', color: '#fff' }}>Select county...</option>
+                      {[
+                        'Baringo','Bomet','Bungoma','Busia','Elgeyo-Marakwet','Embu','Garissa',
+                        'Homa Bay','Isiolo','Kajiado','Kakamega','Kericho','Kiambu','Kilifi',
+                        'Kirinyaga','Kisii','Kisumu','Kitui','Kwale','Laikipia','Lamu','Machakos',
+                        'Makueni','Mandera','Marsabit','Meru','Migori','Mombasa','Murang\'a',
+                        'Nairobi','Nakuru','Nandi','Narok','Nyamira','Nyandarua','Nyeri',
+                        'Samburu','Siaya','Taita-Taveta','Tana River','Tharaka-Nithi','Trans Nzoia',
+                        'Turkana','Uasin Gishu','Vihiga','Wajir','West Pokot'
+                      ].map(c => (
+                        <option key={c} value={c} style={{ background: '#1e2730', color: '#fff' }}>{c}</option>
+                      ))}
+                    </select>
                   </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School Type</label>
+                    <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                      value={suSchoolType} onChange={e => setSuSchoolType(e.target.value)}>
+                      {['Primary', 'Junior Secondary', 'Secondary', 'Mixed Day', 'Boarding'].map(t => (
+                        <option key={t} value={t} style={{ background: '#1e2730', color: '#fff' }}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Curriculum</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {(['CBC', '8-4-4'] as const).map(c => (
+                        <button key={c} type="button"
+                          onClick={() => { setSuCurriculum(c); setSuStartingClass(''); setSuGraduatingClass(''); }}
+                          style={{ flex: 1, padding: '10px 14px', border: `1.5px solid ${suCurriculum === c ? 'var(--mint)' : 'rgba(255,255,255,.1)'}`, borderRadius: 10, background: suCurriculum === c ? 'rgba(0,200,150,.1)' : 'rgba(255,255,255,.04)', color: suCurriculum === c ? 'var(--mint)' : 'rgba(255,255,255,.5)', fontFamily: "'Sora',sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Starting Class</label>
+                      <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                        value={suStartingClass} onChange={e => setSuStartingClass(e.target.value)} required>
+                        <option value="" style={{ background: '#1e2730', color: '#fff' }}>Select...</option>
+                        {CURRICULUM_LEVELS[suCurriculum].map(l => (
+                          <option key={l} value={l} style={{ background: '#1e2730', color: '#fff' }}>{l}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Graduating Class</label>
+                      <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                        value={suGraduatingClass} onChange={e => setSuGraduatingClass(e.target.value)} required>
+                        <option value="" style={{ background: '#1e2730', color: '#fff' }}>Select...</option>
+                        {CURRICULUM_LEVELS[suCurriculum].map(l => (
+                          <option key={l} value={l} style={{ background: '#1e2730', color: '#fff' }}>{l}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={suStreamsEnabled} onChange={e => setSuStreamsEnabled(e.target.checked)} />
+                      This school uses streams (e.g. Grade 1A, Grade 1B)
+                    </label>
+                  </div>
+
+                  {suStreamsEnabled && (
+                    <>
+                      <div className="form-group">
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {([['uniform', 'Same streams for every class'], ['perClass', 'Different streams per class']] as const).map(([mode, label]) => (
+                            <button key={mode} type="button" onClick={() => setSuStreamMode(mode)}
+                              style={{ flex: 1, padding: '8px 10px', border: `1.5px solid ${suStreamMode === mode ? 'var(--mint)' : 'rgba(255,255,255,.1)'}`, borderRadius: 10, background: suStreamMode === mode ? 'rgba(0,200,150,.1)' : 'rgba(255,255,255,.04)', color: suStreamMode === mode ? 'var(--mint)' : 'rgba(255,255,255,.5)', fontFamily: "'Sora',sans-serif", fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {suStreamMode === 'uniform' ? (
+                        <div className="form-group">
+                          <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Streams <span style={{ color: 'rgba(255,255,255,.3)', fontSize: 11, textTransform: 'none' }}>(comma-separated)</span></label>
+                          <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                            type="text" placeholder="A, B" value={suUniformStreamsText} onChange={e => setSuUniformStreamsText(e.target.value)} />
+                        </div>
+                      ) : (
+                        previewLevels.length > 0 && (
+                          <div className="form-group">
+                            <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Streams per class</label>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto', padding: 4 }}>
+                              {previewLevels.map(level => (
+                                <div key={level} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                  <div style={{ width: 90, fontSize: 12, color: 'rgba(255,255,255,.5)', flexShrink: 0 }}>{level}</div>
+                                  <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', padding: '8px 10px' }}
+                                    type="text" placeholder="A, B, C" value={suPerClassStreamsText[level] || ''}
+                                    onChange={e => setSuPerClassStreamsText(prev => ({ ...prev, [level]: e.target.value }))} />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </>
+                  )}
+
+                  {previewLevels.length > 0 && (
+                    <div style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, padding: 12, fontSize: 12, color: 'rgba(255,255,255,.5)', marginBottom: 16 }}>
+                      {previewLevels.length} class level{previewLevels.length !== 1 ? 's' : ''}: {previewLevels.join(', ')}
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
                   <div className="form-group">
-                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School ID <span style={{ color: 'rgba(255,255,255,.3)', fontSize: 11 }}>(from your admin)</span></label>
-                    <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
-                      type="text" placeholder="SCH-ABC123" value={suSchoolId} onChange={e => setSuSchoolId(e.target.value)} required />
+                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>KNEC School Code <span style={{ color: 'rgba(255,255,255,.3)', fontSize: 11 }}>(from your admin)</span></label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', fontFamily: "'DM Mono',monospace" }}
+                        type="text" placeholder="e.g. 12345678" value={suSchoolId}
+                        onChange={e => { setSuSchoolId(e.target.value.toUpperCase()); setSuTeacherClasses(null); setSuClass(''); }} required />
+                      <button type="button" className="btn-secondary" onClick={lookupTeacherClasses} disabled={suTeacherClassesLoading || !suSchoolId.trim()} style={{ whiteSpace: 'nowrap' }}>
+                        {suTeacherClassesLoading ? 'Looking up…' : 'Find School'}
+                      </button>
+                    </div>
+                    {suTeacherClassesError && <div style={{ fontSize: 12, color: 'var(--red, #e84545)', marginTop: 6 }}>{suTeacherClassesError}</div>}
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Your Class</label>
-                    <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
-                      type="text" placeholder="Grade 7A" value={suClass} onChange={e => setSuClass(e.target.value)} required />
+                    {suTeacherClasses ? (
+                      <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                        value={suClass} onChange={e => setSuClass(e.target.value)} required>
+                        <option value="" style={{ background: '#1e2730', color: '#fff' }}>Select your class...</option>
+                        {suTeacherClasses.map(c => (
+                          <option key={c} value={c} style={{ background: '#1e2730', color: '#fff' }}>{c}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                        type="text" placeholder="Grade 7A — or find your school above to pick from a list" value={suClass} onChange={e => setSuClass(e.target.value)} required />
+                    )}
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School Name</label>

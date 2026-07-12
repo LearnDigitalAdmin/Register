@@ -11,7 +11,10 @@ import {
   sanitiseSmsText,
   getSmsTier, KES_RATE_PER_TOKEN,
   TOKEN_PACKAGES, tokensToKes,
+  ClassStructure,
 } from '../types';
+import { getClassStructure } from '../services/academicYearService';
+import { createEnrolment } from '../services/enrolmentService';
 import {
   SchoolInfo,
   analyseComposedMessage,
@@ -27,8 +30,7 @@ import TermlyReportModal from '../components/TermlyReportModal';
 import WeeklyReportModal from '../components/WeeklyReportModal';
 // at the top with other imports
 import ContactUs, { ContactButton } from '../components/ContactUs';
-
-// with the other useState declarations
+import AcademicYearPanel from '../components/AcademicYearPanel';
 
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
@@ -36,7 +38,7 @@ const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: '
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings';
+type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings' | 'academicYears';
 
 // ─── Compose box with live full-message preview ───────────────────────────────
 function SmsComposeBox({
@@ -240,6 +242,7 @@ function MobileDrawerNav({
     { id: 'messages',  icon: '💬', label: 'Send SMS' },
     { id: 'logs',      icon: '🗂️', label: 'Msg Logs' },
     { id: 'reports',   icon: '📊', label: 'Reports' },
+    { id: 'academicYears', icon: '🎓', label: 'Academic Years', adminOnly: true },
     { id: 'settings',  icon: '⚙️', label: 'Settings', adminOnly: true },
   ];
 
@@ -248,10 +251,12 @@ function MobileDrawerNav({
   const PANEL_LABEL: Record<Panel, string> = {
     overview: 'Overview', register: "Today's Register", students: 'Students',
     messages: 'Send SMS', logs: 'Message Logs', reports: 'Reports', settings: 'Settings',
+    academicYears: 'Academic Years'
   };
   const PANEL_ICON: Record<Panel, string> = {
     overview: '🏠', register: '📋', students: '👥',
     messages: '💬', logs: '🗂️', reports: '📊', settings: '⚙️',
+    academicYears: '📅'
   };
 
   function navigate(id: Panel) { setPanel(id); setOpen(false); }
@@ -389,6 +394,8 @@ export default function AppDashboard() {
 
   const [schoolInfo,     setSchoolInfo]     = useState<SchoolInfo | null>(null);
   const [settingsPhone,  setSettingsPhone]  = useState('');
+  const [classStructure, setClassStructure] = useState<ClassStructure | null>(null);
+  const [activeAcademicYearId, setActiveAcademicYearId] = useState('');
 
   const isAdmin   = userProfile?.role === 'schoolAdmin';
   const schoolId  = userProfile?.schoolId || '';
@@ -413,6 +420,7 @@ export default function AppDashboard() {
       };
       setSchoolInfo(info);
       setSettingsPhone(info.phone);
+      if (d?.activeAcademicYearId) setActiveAcademicYearId(d.activeAcademicYearId);
     }).catch(() => {
       const info: SchoolInfo = {
         id: schoolId, name: userProfile?.schoolName || '', phone: userProfile?.phone || '',
@@ -420,6 +428,7 @@ export default function AppDashboard() {
       setSchoolInfo(info);
       setSettingsPhone(info.phone);
     });
+    getClassStructure(schoolId).then(setClassStructure).catch(() => setClassStructure(null));
   }, [schoolId]);
 
   useEffect(() => { if (userProfile) loadStudents(); }, [userProfile]);
@@ -431,7 +440,7 @@ export default function AppDashboard() {
     try {
       const q    = query(collection(db, 'students'), where('schoolId', '==', schoolId));
       const snap = await getDocs(q);
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)).filter(s => !s.archived);
       setStudents(list);
       const init: Record<string, AttendanceStatus> = {};
       list.forEach(s => { init[s.id] = 'present'; });
@@ -474,6 +483,7 @@ export default function AppDashboard() {
         savedBy: userProfile.displayName, savedAt: new Date().toISOString(),
         locked: true, present: counts.present, absent: counts.absent,
         late: counts.late, excused: counts.excused, total: students.length,
+        ...(activeAcademicYearId ? { academicYearId: activeAcademicYearId } : {}),
       });
 
       for (const s of students) {
@@ -484,6 +494,8 @@ export default function AppDashboard() {
           note: notes[s.id] || '',
           savedBy: userProfile.displayName,
           savedAt: new Date().toISOString(), locked: true,
+          ...(s.currentEnrolmentId ? { enrolmentId: s.currentEnrolmentId } : {}),
+          ...(activeAcademicYearId ? { academicYearId: activeAcademicYearId } : {}),
         });
       }
 
@@ -539,7 +551,16 @@ export default function AppDashboard() {
         createdAt: new Date().toISOString(),
       };
       const ref = await addDoc(collection(db, 'students'), s);
-      setStudents(prev => [...prev, { id: ref.id, ...s }]);
+      let currentEnrolmentId: string | undefined;
+      if (activeAcademicYearId) {
+        try {
+          const enrolment = await createEnrolment({
+            studentId: ref.id, schoolId, academicYearId: activeAcademicYearId, classCode,
+          });
+          currentEnrolmentId = enrolment.id;
+        } catch (e) { console.error('Enrolment creation failed:', e); }
+      }
+      setStudents(prev => [...prev, { id: ref.id, ...s, ...(currentEnrolmentId ? { currentEnrolmentId } : {}) }]);
       setAttendance(prev => ({ ...prev, [ref.id]: 'present' }));
       setShowAddStudent(false);
       setNewStudent({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
@@ -602,6 +623,7 @@ export default function AppDashboard() {
     { id: 'messages',  icon: '💬', label: 'Send SMS' },
     { id: 'logs',      icon: '🗂️', label: 'Message Logs' },
     { id: 'reports',   icon: '📊', label: 'Reports' },
+    { id: 'academicYears', icon: '🎓', label: 'Academic Years', adminOnly: true },
     { id: 'settings',  icon: '⚙️', label: 'Settings', adminOnly: true },
   ];
 
@@ -1038,7 +1060,7 @@ export default function AppDashboard() {
                     <div className="form-group">
                       <label className="form-label">Send To</label>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {['All School', classCode, ...(isAdmin ? ['Grade 6A', 'Grade 5A'] : [])].map(c => (
+                        {['All School', classCode, ...(isAdmin ? (classStructure?.classes.filter(c => c !== classCode) || []) : [])].map(c => (
                           <div key={c} className={`chip${msgTo === c ? ' active' : ''}`} onClick={() => setMsgTo(c)}>{c}</div>
                         ))}
                       </div>
@@ -1315,6 +1337,20 @@ export default function AppDashboard() {
           </>
         )}
 
+        {/* ── ACADEMIC YEARS ────────────────────────────────────────────── */}
+        {panel === 'academicYears' && isAdmin && (
+          <>
+            <div className="page-header"><div><div className="page-title">Academic Years</div><div className="page-sub">Class structure, streams, promotion & graduation</div></div></div>
+            <div className="page-body">
+              <AcademicYearPanel
+                schoolId={schoolId}
+                schoolName={userProfile.schoolName}
+                onPromotionApplied={async () => { await loadStudents(); toast('✅ Promotion applied. Rosters updated.'); }}
+              />
+            </div>
+          </>
+        )}
+
         {/* ── SETTINGS ──────────────────────────────────────────────────── */}
         {panel === 'settings' && (
           <>
@@ -1438,6 +1474,7 @@ export default function AppDashboard() {
         onClose={() => setShowTermly(false)}
         schoolId={schoolId}
         schoolName={userProfile.schoolName}
+        academicYearId={activeAcademicYearId}
       />
 
       <WeeklyReportModal
@@ -1445,6 +1482,7 @@ export default function AppDashboard() {
         onClose={() => setShowWeekly(false)}
         schoolId={schoolId}
         schoolName={userProfile.schoolName}
+        academicYearId={activeAcademicYearId}
       />
 
       <StudentProfileModal
@@ -1453,6 +1491,7 @@ export default function AppDashboard() {
         schoolId={schoolId}
         schoolName={userProfile.schoolName}
         students={students}
+        academicYearId={activeAcademicYearId}
       />
 
       {/* ── MOBILE DRAWER NAV ─────────────────────────────────────────── */}

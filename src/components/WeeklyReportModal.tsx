@@ -21,6 +21,7 @@ interface Props {
   onClose:    () => void;
   schoolId:   string;
   schoolName: string;
+  academicYearId?: string;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -144,7 +145,7 @@ function ClassWeekCard({ cls }: { cls: WeeklyClassSummary }) {
 
 // ─── Main modal ────────────────────────────────────────────────────────────────
 
-export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolName }: Props) {
+export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolName, academicYearId }: Props) {
   const [refDate,  setRefDate]  = useState(new Date());
   const [summary,  setSummary]  = useState<WeeklySummary | null>(null);
   const [loading,  setLoading]  = useState(false);
@@ -157,13 +158,15 @@ export default function WeeklyReportModal({ isOpen, onClose, schoolId, schoolNam
   schoolIdRef.current = schoolId;
   const schoolNameRef = useRef(schoolName);
   schoolNameRef.current = schoolName;
+  const academicYearIdRef = useRef(academicYearId);
+  academicYearIdRef.current = academicYearId;
 
   // Stable function — empty deps, reads everything via refs
   const fetchSummary = useCallback(async () => {
     if (!schoolIdRef.current) return;
     setLoading(true); setError('');
     try {
-      const s = await generateWeeklySummary(schoolIdRef.current, schoolNameRef.current, refDateRef.current);
+      const s = await generateWeeklySummary(schoolIdRef.current, schoolNameRef.current, refDateRef.current, academicYearIdRef.current);
       setSummary(s);
     } catch (e: any) {
       setError(e.message || 'Failed to load weekly summary.');

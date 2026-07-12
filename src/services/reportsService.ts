@@ -67,6 +67,8 @@ export interface RawAttendanceRecord {
   savedBy:     string;
   savedAt:     string;
   locked:      boolean;
+  enrolmentId?:    string;
+  academicYearId?: string;
 }
 
 export interface RawStudent {
@@ -92,6 +94,7 @@ export interface RawRegister {
   late:      number;
   excused:   number;
   total:     number;
+  academicYearId?: string;
 }
 
 export interface RawMessage {
@@ -222,6 +225,11 @@ export interface StudentProfile {
  * @param startDate  "YYYY-MM-DD" inclusive
  * @param endDate    "YYYY-MM-DD" inclusive
  * @param termLabel  e.g. "Term 1 2025"
+ * @param absenteeThreshold % below which a student is flagged
+ * @param academicYearId  When provided, only records tagged with this year (or untagged
+ *   pre-Phase-2 legacy records, which predate the enrolment system and can't be mis-attributed
+ *   to a *different* year) are included. Without this, a report run just after a promotion could
+ *   blend last year's "Grade 5A" with this year's "Grade 5A", since class codes are reused yearly.
  */
 export async function generateTermlyReport(
   schoolId:    string,
@@ -230,6 +238,7 @@ export async function generateTermlyReport(
   endDate:     string,
   termLabel:   string,
   absenteeThreshold = 80, // % below which student is flagged
+  academicYearId?: string,
 ): Promise<TermlyReport> {
   // Fetch all attendance records for this school in the date range
   const attQ = query(
@@ -239,7 +248,10 @@ export async function generateTermlyReport(
     where('date', '<=', endDate),
   );
   const attSnap = await getDocs(attQ);
-  const records = attSnap.docs.map(d => d.data() as RawAttendanceRecord);
+  let records = attSnap.docs.map(d => d.data() as RawAttendanceRecord);
+  if (academicYearId) {
+    records = records.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
+  }
 
   // Fetch all registers to know which days had a register (totalDays denominator)
   const regQ = query(
@@ -249,7 +261,11 @@ export async function generateTermlyReport(
     where('date', '<=', endDate),
   );
   const regSnap = await getDocs(regQ);
-  const registerDates = new Set(regSnap.docs.map(d => (d.data() as RawRegister).date));
+  let regDocs = regSnap.docs.map(d => d.data() as RawRegister);
+  if (academicYearId) {
+    regDocs = regDocs.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
+  }
+  const registerDates = new Set(regDocs.map(r => r.date));
 
   // Group records by classCode → studentId
   const byClass: Record<string, Record<string, RawAttendanceRecord[]>> = {};
@@ -331,11 +347,13 @@ export async function generateTermlyReport(
 
 /**
  * Fetches register data for the Mon–Sun week containing `referenceDate`.
+ * @param academicYearId  See generateTermlyReport — same year-scoping rationale.
  */
 export async function generateWeeklySummary(
   schoolId:     string,
   schoolName:   string,
   referenceDate: Date = new Date(),
+  academicYearId?: string,
 ): Promise<WeeklySummary> {
   const { start, end } = weekBounds(referenceDate);
 
@@ -347,7 +365,10 @@ export async function generateWeeklySummary(
     where('date', '<=', end),
   );
   const regSnap = await getDocs(regQ);
-  const registers = regSnap.docs.map(d => d.data() as RawRegister);
+  let registers = regSnap.docs.map(d => d.data() as RawRegister);
+  if (academicYearId) {
+    registers = registers.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
+  }
 
   // Build all 5 weekdays
   const days: string[] = [];
@@ -421,12 +442,14 @@ export async function generateWeeklySummary(
 
 /**
  * Fetches complete attendance history for a single student.
+ * @param academicYearId  See generateTermlyReport — same year-scoping rationale.
  */
 export async function generateStudentProfile(
   studentId:   string,
   schoolId:    string,
   schoolName:  string,
   limitDays:   number = 180,
+  academicYearId?: string,
 ): Promise<StudentProfile | null> {
   // Pull attendance records for this student
   const attQ = query(
@@ -439,9 +462,13 @@ export async function generateStudentProfile(
   const attSnap = await getDocs(attQ);
   if (attSnap.empty) return null;
 
-  const records = attSnap.docs
+  let records = attSnap.docs
     .map(d => d.data() as RawAttendanceRecord)
     .sort((a, b) => a.date.localeCompare(b.date)); // ascending
+  if (academicYearId) {
+    records = records.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
+  }
+  if (records.length === 0) return null;
 
   const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 

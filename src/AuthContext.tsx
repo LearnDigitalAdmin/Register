@@ -9,7 +9,8 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import type { UserProfile } from './types';
+import type { UserProfile, Curriculum, StreamMode } from './types';
+import { createAcademicSetup, isKnecCodeTaken, isValidKnecCode, normaliseKnecCode } from './services/academicYearService';
 
 interface AuthContextType {
   user: User | null;
@@ -28,11 +29,21 @@ interface SignUpParams {
   displayName: string;
   role: 'schoolAdmin' | 'teacherAdmin';
   schoolName: string;
-  schoolId?: string;
+  schoolId?: string;         // teacherAdmin joining: the school's KNEC code
   classCode?: string;
   county?: string;
   /** School contact number shown in every SMS footer */
   schoolPhone?: string;
+  schoolType?: string;
+  /** The following are required for role === 'schoolAdmin' (new school registration) */
+  knecCode?: string;
+  curriculum?: Curriculum;
+  startingClass?: string;
+  graduatingClass?: string;
+  streamsEnabled?: boolean;
+  streamMode?: StreamMode;
+  uniformStreams?: string[];
+  perClassStreams?: Record<string, string[]>;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -68,21 +79,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signUp(params: SignUpParams) {
     const {
       email, phone, password, displayName, role,
-      schoolName, classCode, county, schoolPhone,
+      schoolName, classCode, county, schoolPhone, schoolType,
+      curriculum, startingClass, graduatingClass,
+      streamsEnabled, streamMode, uniformStreams, perClassStreams,
     } = params;
-
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(cred.user, { displayName });
 
     let schoolId = params.schoolId || '';
 
     if (role === 'schoolAdmin') {
-      schoolId = `SCH-${Date.now().toString(36).toUpperCase()}`;
+      if (!params.knecCode || !isValidKnecCode(params.knecCode)) {
+        throw new Error('Enter a valid KNEC school code (letters, numbers, and dashes only).');
+      }
+      if (!curriculum || !startingClass || !graduatingClass) {
+        throw new Error('Select a curriculum, starting class, and graduating class.');
+      }
+      schoolId = normaliseKnecCode(params.knecCode);
+      if (await isKnecCodeTaken(schoolId)) {
+        throw new Error(`KNEC code ${schoolId} is already registered to a school.`);
+      }
+    } else if (role === 'teacherAdmin') {
+      schoolId = normaliseKnecCode(params.schoolId || '');
+    }
+
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(cred.user, { displayName });
+
+    if (role === 'schoolAdmin') {
+      const { academicYear } = await createAcademicSetup({
+        schoolId,
+        curriculum: curriculum!,
+        startingClass: startingClass!,
+        graduatingClass: graduatingClass!,
+        streamsEnabled: !!streamsEnabled,
+        streamMode: streamMode || 'none',
+        uniformStreams,
+        perClassStreams,
+      });
+
       await setDoc(doc(db, 'schools', schoolId), {
         id:         schoolId,
+        knecCode:   schoolId,
         name:       schoolName,
         county:     county || 'Kenya',
-        type:       'Primary (CBC)',
+        type:       schoolType || 'Primary',
+        curriculum,
+        startingClass,
+        graduatingClass,
+        streamsEnabled: !!streamsEnabled,
+        activeAcademicYearId: academicYear.id,
         adminUid:   cred.user.uid,
         adminEmail: email,
         adminPhone: phone,

@@ -14,12 +14,81 @@ export interface UserProfile {
   messageTokens: number;
 }
 
-export interface School {
+/** Kenyan curricula supported for class-level generation */
+export type Curriculum = 'CBC' | '8-4-4';
+
+/** Ordered base class levels (no streams) for each curriculum */
+export const CURRICULUM_LEVELS: Record<Curriculum, string[]> = {
+  'CBC': [
+    'PP1', 'PP2',
+    'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6',
+    'Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12',
+  ],
+  '8-4-4': [
+    'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8',
+    'Form 1', 'Form 2', 'Form 3', 'Form 4',
+  ],
+};
+
+export type StreamMode = 'none' | 'uniform' | 'perClass';
+
+/** Resolved academic structure for a school: levels + streams + final class list */
+export interface ClassStructure {
+  schoolId: string;            // = KNEC code, doc id
+  curriculum: Curriculum;
+  startingClass: string;
+  graduatingClass: string;
+  levels: string[];            // ordered base levels, startingClass..graduatingClass inclusive
+  streamsEnabled: boolean;
+  streamMode: StreamMode;
+  uniformStreams?: string[];           // e.g. ['A','B'] — used for every level when streamMode === 'uniform'
+  perClassStreams?: Record<string, string[]>; // level -> streams, used when streamMode === 'perClass'
+  classes: string[];           // fully resolved, e.g. ['Grade 1A','Grade 1B',...] or ['Grade 1',...] if no streams
+  updatedAt: string;
+}
+
+export type AcademicYearStatus = 'active' | 'closed';
+
+export interface AcademicYear {
+  id: string;                  // `${schoolId}_${label}`
+  schoolId: string;
+  label: string;                // e.g. '2026'
+  status: AcademicYearStatus;
+  startDate: string;
+  closedAt?: string;
+  promotedFromYearId?: string;  // previous year this was promoted from, if any
+  promotionAppliedAt?: string;  // set once promotion has been applied INTO this year — guards double-promotion
+  createdAt: string;
+}
+
+export type EnrolmentStatus = 'active' | 'repeating' | 'transferred' | 'graduated';
+
+/** A student's placement in one academic year. Attendance should reference this, not the student directly. */
+export interface Enrolment {
   id: string;
+  studentId: string;
+  schoolId: string;
+  academicYearId: string;
+  classCode: string;            // resolved class for that year, e.g. 'Grade 5A'
+  status: EnrolmentStatus;
+  createdAt: string;
+}
+
+export interface School {
+  id: string;                   // KNEC code
+  knecCode: string;
   name: string;
   county: string;
-  type: string;
+  type: string;                 // Primary / Secondary / Mixed Day / Boarding etc.
+  curriculum: Curriculum;
+  startingClass: string;
+  graduatingClass: string;
+  streamsEnabled: boolean;
+  activeAcademicYearId: string;
   adminUid: string;
+  adminEmail?: string;
+  adminPhone?: string;
+  phone?: string;
   createdAt: string;
 }
 
@@ -33,6 +102,9 @@ export interface Student {
   parentPhone: string;
   parentWhatsApp: string;
   createdAt: string;
+  nationalId?: string;
+  currentEnrolmentId?: string;  // set once Phase 2 (promotion engine) is wired in
+  archived?: boolean;           // true once graduated into the global archivedStudents collection
 }
 
 export interface AttendanceRecord {
@@ -48,6 +120,8 @@ export interface AttendanceRecord {
   savedBy: string;
   savedAt: string;
   locked: boolean;
+  enrolmentId?: string;      // set once Phase 2 wiring runs; older records may not have it
+  academicYearId?: string;
 }
 
 /** SMS pricing tiers based on recipient count snapshot */
@@ -152,6 +226,36 @@ export interface RegisterDay {
   late: number;
   excused: number;
   total: number;
+  academicYearId?: string;
+}
+
+/** A per-academic-year snapshot kept on an archived (graduated) student record. */
+export interface ArchivedYearRecord {
+  academicYearId: string;
+  yearLabel: string;
+  classCode: string;
+  presentDays: number;
+  absentDays: number;
+  lateDays: number;
+  excusedDays: number;
+  totalDays: number;
+}
+
+/**
+ * Global archive — NOT nested under a school — so graduates from any school can be
+ * looked up (e.g. by a future employer) by admission number, national ID, or name.
+ * Written once at graduation. Never updated or deleted after that.
+ */
+export interface ArchivedStudent {
+  id: string;                    // = original student id, so it's never duplicated
+  name: string;
+  admissionNo: string;
+  nationalId?: string;
+  schoolId: string;
+  schoolName: string;
+  graduatingClass: string;
+  graduatedAt: string;
+  years: ArchivedYearRecord[];   // one entry per academic year the student was enrolled
 }
 
 

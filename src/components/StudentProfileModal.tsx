@@ -25,6 +25,7 @@ interface Props {
   schoolId:    string;
   schoolName:  string;
   students:    Student[];   // already loaded in AppDashboard
+  academicYearId?: string;
 }
 
 // ─── Heatmap ───────────────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
 
 // ─── Main modal ────────────────────────────────────────────────────────────────
 
-export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolName, students }: Props) {
+export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolName, students, academicYearId }: Props) {
   const [search,   setSearch]   = useState('');
   const [selected, setSelected] = useState<Student | null>(null);
   const [profile,  setProfile]  = useState<StudentProfile | null>(null);
@@ -132,7 +133,7 @@ export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolN
   const loadProfile = useCallback(async (student: Student) => {
     setLoading(true); setError('');
     try {
-      const p = await generateStudentProfile(student.id, schoolId, schoolName);
+      const p = await generateStudentProfile(student.id, schoolId, schoolName, 180, academicYearId);
       if (p) {
         // Fill in parent details from local students list
         p.parentName  = student.parentName  || '';
