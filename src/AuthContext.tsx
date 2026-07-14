@@ -86,6 +86,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let schoolId = params.schoolId || '';
 
+    // Client-side shape validation only — no Firestore reads here, since the user
+    // isn't authenticated yet and `schools` (correctly) requires auth to read.
     if (role === 'schoolAdmin') {
       if (!params.knecCode || !isValidKnecCode(params.knecCode)) {
         throw new Error('Enter a valid KNEC school code (letters, numbers, and dashes only).');
@@ -94,9 +96,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Select a curriculum, starting class, and graduating class.');
       }
       schoolId = normaliseKnecCode(params.knecCode);
-      if (await isKnecCodeTaken(schoolId)) {
-        throw new Error(`KNEC code ${schoolId} is already registered to a school.`);
-      }
     } else if (role === 'teacherAdmin') {
       schoolId = normaliseKnecCode(params.schoolId || '');
     }
@@ -105,16 +104,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await updateProfile(cred.user, { displayName });
 
     if (role === 'schoolAdmin') {
-      const { academicYear } = await createAcademicSetup({
-        schoolId,
-        curriculum: curriculum!,
-        startingClass: startingClass!,
-        graduatingClass: graduatingClass!,
-        streamsEnabled: !!streamsEnabled,
-        streamMode: streamMode || 'none',
-        uniformStreams,
-        perClassStreams,
-      });
+      // Now authenticated, so the KNEC-taken check (a `schools` read) is allowed to run.
+      // If it's taken, tear down the auth account we just created rather than leaving an
+      // orphaned, profile-less user behind.
+      if (await isKnecCodeTaken(schoolId)) {
+        await cred.user.delete();
+        throw new Error(`KNEC code ${schoolId} is already registered to a school.`);
+      }
+
+      // The academicYear id is deterministic (`${schoolId}_${yearLabel}`), so we can compute
+      // it up front and create the `schools` doc FIRST. classStructures/academicYears rules
+      // both check `schools/{schoolId}.adminUid`, which only exists once this doc is written —
+      // creating it any later denies those writes with "insufficient permissions".
+      const yearLabel = String(new Date().getFullYear());
+      const academicYearId = `${schoolId}_${yearLabel}`;
 
       await setDoc(doc(db, 'schools', schoolId), {
         id:         schoolId,
@@ -126,13 +129,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         startingClass,
         graduatingClass,
         streamsEnabled: !!streamsEnabled,
-        activeAcademicYearId: academicYear.id,
+        activeAcademicYearId: academicYearId,
         adminUid:   cred.user.uid,
         adminEmail: email,
         adminPhone: phone,
         // phone is the dedicated SMS-footer contact — defaults to admin phone
         phone:      schoolPhone || phone || '',
         createdAt:  new Date().toISOString(),
+      });
+
+      await createAcademicSetup({
+        schoolId,
+        curriculum: curriculum!,
+        startingClass: startingClass!,
+        graduatingClass: graduatingClass!,
+        streamsEnabled: !!streamsEnabled,
+        streamMode: streamMode || 'none',
+        uniformStreams,
+        perClassStreams,
+        yearLabel,
       });
     }
 
