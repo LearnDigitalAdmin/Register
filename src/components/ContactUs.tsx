@@ -9,12 +9,19 @@ interface Props {
   onClose: () => void;
 }
 
-const PHONE     = '0791286165';
-const PHONE_HREF= 'tel:+254791286165';
-const WA_HREF   = 'https://wa.me/254791286165';
-const WA_NUM    = '+254 791 286 165';
-const EMAIL     = 'info@cogvana.co.ke';
-const EMAIL_HREF= 'mailto:info@cogvana.co.ke';
+const PHONE       = '0791286165';
+const PHONE_HREF  = 'tel:+254791286165';
+const WA_HREF     = 'https://wa.me/254791286165';
+const WA_NUM      = '+254 791 286 165';
+
+const EMAIL_GENERAL      = 'info@cogvana.co.ke';
+const EMAIL_GENERAL_HREF = 'mailto:info@cogvana.co.ke';
+const EMAIL_GENERAL_ALT      = 'cogvana@gmail.com';
+const EMAIL_GENERAL_ALT_HREF = 'mailto:cogvana@gmail.com';
+const EMAIL_SALES        = 'sales@cogvana.co.ke';
+const EMAIL_SALES_HREF   = 'mailto:sales@cogvana.co.ke';
+const EMAIL_SUPPORT      = 'sam.muhia@cogvana.co.ke';
+const EMAIL_SUPPORT_HREF = 'mailto:sam.muhia@cogvana.co.ke';
 
 // ─── Contact row ──────────────────────────────────────────────────────────────
 
@@ -220,9 +227,29 @@ export default function ContactUs({ isOpen, onClose }: Props) {
             />
             <ContactRow
               icon="✉️"
-              label="Email"
-              value={EMAIL}
-              href={EMAIL_HREF}
+              label="General Enquiries"
+              value={EMAIL_GENERAL}
+              href={EMAIL_GENERAL_HREF}
+            />
+            <ContactRow
+              icon="✉️"
+              label="Also Reaches Us"
+              value={EMAIL_GENERAL_ALT}
+              href={EMAIL_GENERAL_ALT_HREF}
+            />
+            <ContactRow
+              icon="🛒"
+              label="Sales"
+              value={EMAIL_SALES}
+              href={EMAIL_SALES_HREF}
+              tag="Sales"
+            />
+            <ContactRow
+              icon="🛠️"
+              label="Support & Admin"
+              value={EMAIL_SUPPORT}
+              href={EMAIL_SUPPORT_HREF}
+              tag="Support"
             />
           </div>
         </div>

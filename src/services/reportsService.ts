@@ -9,26 +9,62 @@
  *
  * All functions are pure async — they fetch and return data; rendering is
  * handled by the modal components.
+ *
+ * ─── Counting model ─────────────────────────────────────────────────────────
+ * Two things used to be conflated: "how many students does this class/school
+ * have" and "how many distinct students show up in the attendance history for
+ * this period". Those aren't the same question, and answering the first one
+ * with the second is what caused reports to disagree with the Students panel:
+ *   - A brand-new student with no register taken yet was invisible in reports
+ *     until their first attendance record existed.
+ *   - A stray classCode (e.g. a pseudo "class" that was never a real class, or
+ *     a class a student has since moved out of) was treated as its own class
+ *     bucket, so the same physical student could be counted more than once in
+ *     the school-wide total.
+ *
+ * The fix has two parts:
+ *   1. Student *counts* (per class and school-wide) are sourced from the live
+ *      roster — the same `students` collection the Students panel already
+ *      reads from — for any reporting window that includes today. That's the
+ *      single source of truth for "who's enrolled right now", so it can never
+ *      drift from what every other panel shows. A student with zero
+ *      attendance records yet still appears, with 0 tracked days rather than
+ *      a fabricated rate.
+ *   2. `totalStudents` is always a *distinct*-student count across the whole
+ *      report, not a sum of each class bucket's count. A student whose
+ *      attendance history legitimately spans two classCodes (an internal
+ *      transfer mid-term, for instance — see transferService, which
+ *      deliberately preserves old-class history) is still only counted once
+ *      at the school level.
+ * For a *closed* historical window (the whole date range is in the past),
+ * the live roster is intentionally NOT used to inject students — a past
+ * term's report should reflect who was actually being tracked back then, not
+ * who happens to be enrolled today. The distinct-student dedup still applies
+ * either way, since it only ever removes double-counting, never invents rows.
+ *
+ * Both report generators also defensively drop any attendance/register record
+ * whose classCode isn't one of the school's actual configured classes (see
+ * `getKnownClassCodes`) before grouping anything by classCode. That's a second
+ * line of defense against a record ever having been saved under something
+ * that was never a real class (e.g. a stray "All School" pseudo-class) — such
+ * records simply can't form their own phantom class bucket in a report.
  */
 
 import {
   collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
   query,
   where,
-  getDocs,
-  orderBy,
-  limit,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { AttendanceStatus, SmsTier } from '../types';
+import type { AttendanceStatus, ClassStructure, SmsTier, Student } from '../types';
 import { KES_RATE_PER_TOKEN } from '../types';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
-
-function isoToDate(iso: string): Date {
-  return new Date(iso);
-}
 
 /** "2025-01-27" → Date (local) */
 function ymdToDate(ymd: string): Date {
@@ -41,6 +77,22 @@ function dateToYmd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Today, as "YYYY-MM-DD" in the same format every date in this file uses. */
+function todayYmd(): string {
+  return dateToYmd(new Date());
+}
+
+/**
+ * A reporting window "is current" when it includes (or extends past) today —
+ * i.e. the term/period hasn't fully concluded yet. Only current windows get
+ * the live-roster merge described in the module doc comment above; a report
+ * for a term that's already over should reflect history as it stood, not
+ * today's roster.
+ */
+function isCurrentReportingWindow(endDate: string): boolean {
+  return endDate >= todayYmd();
+}
+
 /** Week boundaries (Mon–Sun) containing a date */
 function weekBounds(d: Date): { start: string; end: string } {
   const copy = new Date(d);
@@ -51,6 +103,39 @@ function weekBounds(d: Date): { start: string; end: string } {
   copy.setDate(copy.getDate() + 6);
   const end = dateToYmd(copy);
   return { start, end };
+}
+
+/**
+ * Fetches the school's actual configured class list (from `classStructures`),
+ * used to defensively filter out any attendance/register record whose
+ * classCode isn't a real class at this school. Returns `null` (meaning "don't
+ * filter") if the school has no class structure doc yet, rather than risk
+ * hiding every record for a school that's still mid-setup.
+ */
+async function getKnownClassCodes(schoolId: string): Promise<Set<string> | null> {
+  try {
+    const snap = await getDoc(doc(db, 'classStructures', schoolId));
+    if (!snap.exists()) return null;
+    const structure = snap.data() as ClassStructure;
+    if (!Array.isArray(structure.classes) || structure.classes.length === 0) return null;
+    return new Set(structure.classes);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The live, current roster for a school — the exact same source of truth the
+ * Students panel reads from (`students` where schoolId matches, archived
+ * students excluded). Optionally scoped to one class.
+ */
+async function getActiveRoster(schoolId: string, classCodeFilter?: string): Promise<Student[]> {
+  const q = query(collection(db, 'students'), where('schoolId', '==', schoolId));
+  const snap = await getDocs(q);
+  const roster = snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Student))
+    .filter(s => !s.archived);
+  return classCodeFilter ? roster.filter(s => s.classCode === classCodeFilter) : roster;
 }
 
 // ─── Raw Firestore types ───────────────────────────────────────────────────────
@@ -125,12 +210,12 @@ export interface TermlyStudentRow {
   studentName:  string;
   admissionNo:  string;
   classCode:    string;
-  totalDays:    number; // school days in term with a register
+  totalDays:    number; // school days in term with a register that this student had the chance to be marked in
   present:      number;
   absent:       number;
   late:         number;
   excused:      number;
-  rate:         number; // percentage (present / totalDays * 100)
+  rate:         number; // percentage (present / totalDays * 100), 0 when totalDays is 0
 }
 
 export interface TermlyClassSummary {
@@ -150,7 +235,7 @@ export interface TermlyReport {
   totalStudents: number;
   overallRate:   number;
   classes:      TermlyClassSummary[];
-  /** Chronic absentees — rate < threshold */
+  /** Chronic absentees — rate < threshold (only among students with at least one tracked day) */
   chronicAbsentees: TermlyStudentRow[];
 }
 
@@ -218,7 +303,10 @@ export interface StudentProfile {
 
 /**
  * Fetches all attendance records for the school between startDate and endDate.
- * Groups by class → student and computes per-student stats.
+ * Groups by class → student and computes per-student stats. For a reporting
+ * window that includes today, the live roster is merged in so a student
+ * added today (even with no register taken for them yet) is reflected
+ * immediately — see the module doc comment for the full rationale.
  *
  * @param schoolId   Firestore school ID
  * @param schoolName Display name
@@ -230,6 +318,7 @@ export interface StudentProfile {
  *   pre-Phase-2 legacy records, which predate the enrolment system and can't be mis-attributed
  *   to a *different* year) are included. Without this, a report run just after a promotion could
  *   blend last year's "Grade 5A" with this year's "Grade 5A", since class codes are reused yearly.
+ * @param classCodeFilter when set, scope the whole report to just this class
  */
 export async function generateTermlyReport(
   schoolId:    string,
@@ -239,16 +328,24 @@ export async function generateTermlyReport(
   termLabel:   string,
   absenteeThreshold = 80, // % below which student is flagged
   academicYearId?: string,
-  classCodeFilter?: string, // when set, scope the whole report to just this class
+  classCodeFilter?: string,
 ): Promise<TermlyReport> {
-  // Fetch all attendance records for this school in the date range
-  const attQ = query(
-    collection(db, 'attendance'),
-    where('schoolId', '==', schoolId),
-    where('date', '>=', startDate),
-    where('date', '<=', endDate),
-  );
-  const attSnap = await getDocs(attQ);
+  const [attSnap, regSnap, knownClassCodes] = await Promise.all([
+    getDocs(query(
+      collection(db, 'attendance'),
+      where('schoolId', '==', schoolId),
+      where('date', '>=', startDate),
+      where('date', '<=', endDate),
+    )),
+    getDocs(query(
+      collection(db, 'registers'),
+      where('schoolId', '==', schoolId),
+      where('date', '>=', startDate),
+      where('date', '<=', endDate),
+    )),
+    getKnownClassCodes(schoolId),
+  ]);
+
   let records = attSnap.docs.map(d => d.data() as RawAttendanceRecord);
   if (academicYearId) {
     records = records.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
@@ -256,15 +353,10 @@ export async function generateTermlyReport(
   if (classCodeFilter) {
     records = records.filter(r => r.classCode === classCodeFilter);
   }
+  if (knownClassCodes) {
+    records = records.filter(r => knownClassCodes.has(r.classCode));
+  }
 
-  // Fetch all registers to know which days had a register (totalDays denominator)
-  const regQ = query(
-    collection(db, 'registers'),
-    where('schoolId', '==', schoolId),
-    where('date', '>=', startDate),
-    where('date', '<=', endDate),
-  );
-  const regSnap = await getDocs(regQ);
   let regDocs = regSnap.docs.map(d => d.data() as RawRegister);
   if (academicYearId) {
     regDocs = regDocs.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
@@ -272,9 +364,11 @@ export async function generateTermlyReport(
   if (classCodeFilter) {
     regDocs = regDocs.filter(r => r.classCode === classCodeFilter);
   }
-  const registerDates = new Set(regDocs.map(r => r.date));
+  if (knownClassCodes) {
+    regDocs = regDocs.filter(r => knownClassCodes.has(r.classCode));
+  }
 
-  // Group records by classCode → studentId
+  // Group attendance records by classCode → studentId
   const byClass: Record<string, Record<string, RawAttendanceRecord[]>> = {};
   for (const rec of records) {
     if (!byClass[rec.classCode]) byClass[rec.classCode] = {};
@@ -282,24 +376,38 @@ export async function generateTermlyReport(
     byClass[rec.classCode][rec.studentId].push(rec);
   }
 
+  // Live roster merge — only for a window that includes today (see module doc comment).
+  const rosterByClass: Record<string, Student[]> = {};
+  if (isCurrentReportingWindow(endDate)) {
+    const roster = await getActiveRoster(schoolId, classCodeFilter);
+    for (const s of roster) {
+      if (knownClassCodes && !knownClassCodes.has(s.classCode)) continue;
+      if (!rosterByClass[s.classCode]) rosterByClass[s.classCode] = [];
+      rosterByClass[s.classCode].push(s);
+    }
+  }
+
+  const allClassCodes = new Set<string>([...Object.keys(byClass), ...Object.keys(rosterByClass)]);
+
   const classes: TermlyClassSummary[] = [];
   const allStudentRows: TermlyStudentRow[] = [];
 
-  for (const [classCode, studentMap] of Object.entries(byClass)) {
-    // Count distinct register days for this class
-    const classDays = [...registerDates].filter(date => {
-      // A day counts if any student in this class has a record on that date
-      return records.some(r => r.classCode === classCode && r.date === date);
-    });
-    const totalDays = classDays.length || 1; // avoid /0
+  for (const classCode of allClassCodes) {
+    const studentMap = byClass[classCode] || {};
 
-    const studentRows: TermlyStudentRow[] = Object.entries(studentMap).map(
+    // Count distinct register days for this class
+    const classDays = regDocs
+      .filter(r => r.classCode === classCode)
+      .map(r => r.date);
+    const totalDays = new Set(classDays).size;
+
+    const trackedRows: TermlyStudentRow[] = Object.entries(studentMap).map(
       ([studentId, recs]) => {
         const present = recs.filter(r => r.status === 'present').length;
         const absent  = recs.filter(r => r.status === 'absent').length;
         const late    = recs.filter(r => r.status === 'late').length;
         const excused = recs.filter(r => r.status === 'excused').length;
-        const rate    = Math.round((present / totalDays) * 100);
+        const rate    = totalDays > 0 ? Math.round((present / totalDays) * 100) : 0;
         return {
           studentId,
           studentName: recs[0].studentName,
@@ -315,12 +423,35 @@ export async function generateTermlyReport(
       },
     );
 
-    const avgRate = studentRows.length
-      ? Math.round(studentRows.reduce((s, r) => s + r.rate, 0) / studentRows.length)
+    // Roster students with zero attendance records yet this window (e.g. added today, before
+    // their first register) — shown with 0 tracked days rather than a fabricated 0% rate.
+    const trackedIds = new Set(trackedRows.map(r => r.studentId));
+    const untrackedRows: TermlyStudentRow[] = (rosterByClass[classCode] || [])
+      .filter(s => !trackedIds.has(s.id))
+      .map(s => ({
+        studentId: s.id,
+        studentName: s.name,
+        admissionNo: s.admissionNo,
+        classCode,
+        totalDays: 0,
+        present: 0,
+        absent: 0,
+        late: 0,
+        excused: 0,
+        rate: 0,
+      }));
+
+    const studentRows = [...trackedRows, ...untrackedRows]
+      .sort((a, b) => a.studentName.localeCompare(b.studentName));
+
+    // Rate average only over students who've actually had at least one tracked day — a brand
+    // new student with 0 tracked days shouldn't drag a class's average rate down to look worse
+    // than it really is.
+    const ratedRows = studentRows.filter(r => r.totalDays > 0);
+    const avgRate = ratedRows.length
+      ? Math.round(ratedRows.reduce((s, r) => s + r.rate, 0) / ratedRows.length)
       : 0;
 
-    // Sort by name
-    studentRows.sort((a, b) => a.studentName.localeCompare(b.studentName));
     classes.push({ classCode, totalDays, avgRate, students: studentRows });
     allStudentRows.push(...studentRows);
   }
@@ -328,12 +459,18 @@ export async function generateTermlyReport(
   // Sort classes alphabetically
   classes.sort((a, b) => a.classCode.localeCompare(b.classCode));
 
-  const overallRate = allStudentRows.length
-    ? Math.round(allStudentRows.reduce((s, r) => s + r.rate, 0) / allStudentRows.length)
+  // Distinct-student count school-wide — the fix for the double-counting bug. A student whose
+  // history legitimately spans more than one classCode (an internal transfer mid-term, or —
+  // pre-fix — a stray non-class record) is still only counted once here.
+  const totalStudents = new Set(allStudentRows.map(r => r.studentId)).size;
+
+  const ratedAllRows = allStudentRows.filter(r => r.totalDays > 0);
+  const overallRate = ratedAllRows.length
+    ? Math.round(ratedAllRows.reduce((s, r) => s + r.rate, 0) / ratedAllRows.length)
     : 0;
 
   const chronicAbsentees = allStudentRows
-    .filter(r => r.rate < absenteeThreshold)
+    .filter(r => r.totalDays > 0 && r.rate < absenteeThreshold)
     .sort((a, b) => a.rate - b.rate);
 
   return {
@@ -343,7 +480,7 @@ export async function generateTermlyReport(
     startDate,
     endDate,
     generatedAt: new Date().toISOString(),
-    totalStudents: allStudentRows.length,
+    totalStudents,
     overallRate,
     classes,
     chronicAbsentees,
@@ -355,30 +492,36 @@ export async function generateTermlyReport(
 /**
  * Fetches register data for the Mon–Sun week containing `referenceDate`.
  * @param academicYearId  See generateTermlyReport — same year-scoping rationale.
+ * @param classCodeFilter when set, scope the whole summary to just this class
  */
 export async function generateWeeklySummary(
   schoolId:     string,
   schoolName:   string,
   referenceDate: Date = new Date(),
   academicYearId?: string,
-  classCodeFilter?: string, // when set, scope the whole summary to just this class
+  classCodeFilter?: string,
 ): Promise<WeeklySummary> {
   const { start, end } = weekBounds(referenceDate);
 
-  // Fetch registers for the week
-  const regQ = query(
-    collection(db, 'registers'),
-    where('schoolId', '==', schoolId),
-    where('date', '>=', start),
-    where('date', '<=', end),
-  );
-  const regSnap = await getDocs(regQ);
+  const [regSnap, knownClassCodes] = await Promise.all([
+    getDocs(query(
+      collection(db, 'registers'),
+      where('schoolId', '==', schoolId),
+      where('date', '>=', start),
+      where('date', '<=', end),
+    )),
+    getKnownClassCodes(schoolId),
+  ]);
+
   let registers = regSnap.docs.map(d => d.data() as RawRegister);
   if (academicYearId) {
     registers = registers.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
   }
   if (classCodeFilter) {
     registers = registers.filter(r => r.classCode === classCodeFilter);
+  }
+  if (knownClassCodes) {
+    registers = registers.filter(r => knownClassCodes.has(r.classCode));
   }
 
   // Build all 5 weekdays

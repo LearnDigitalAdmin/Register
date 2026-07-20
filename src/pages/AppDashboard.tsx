@@ -223,15 +223,19 @@ function MessageLogRow({ msg, onResend, onPreview }: {
 }
 
 // ─── Mobile Drawer Nav ────────────────────────────────────────────────────────
+// Note: ContactUs is a single shared modal owned by AppDashboard (see `showContact` state
+// there) — the drawer only asks its parent to open it via `onContactUs`, it does not own its
+// own ContactUs instance/state. Keeping a second, unwired copy here would mean the drawer's
+// "Contact" tap does nothing.
 function MobileDrawerNav({
-  panel, setPanel, isAdmin, userProfile, tokens, onTopUp, onSignOut,
+  panel, setPanel, isAdmin, userProfile, tokens, onTopUp, onSignOut, onContactUs,
 }: {
   panel: Panel; setPanel: (p: Panel) => void; isAdmin: boolean;
   userProfile: any; tokens: number; onTopUp: () => void; onSignOut: () => void;
+  onContactUs: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
-  const [showContact, setShowContact] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
@@ -348,7 +352,7 @@ function MobileDrawerNav({
             <div style={{ fontSize: 13, fontWeight: 700, color: '#f0ede6', marginBottom: 2 }}>{userProfile.displayName}</div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>{userProfile.email}</div>
           </div>
-          <ContactButton onClick={() => setShowContact(true)} variant="ghost" />
+          <ContactButton onClick={() => { setOpen(false); onContactUs(); }} variant="ghost" />
           <button onClick={() => { setOpen(false); onSignOut(); }} style={{ fontSize: 12, fontWeight: 600, padding: '7px 14px', border: '1px solid rgba(255,255,255,.18)', borderRadius: 8, background: 'transparent', color: 'rgba(255,255,255,.55)', cursor: 'pointer', fontFamily: "'Sora', sans-serif", transition: 'border-color .15s, color .15s' }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.45)'; e.currentTarget.style.color = '#f0ede6'; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.18)'; e.currentTarget.style.color = 'rgba(255,255,255,.55)'; }}
@@ -381,6 +385,7 @@ export default function AppDashboard() {
   const [notes,           setNotes]           = useState<Record<string, string>>({});
   const [registerLocked,  setRegisterLocked]  = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
+  const [savingRegister,  setSavingRegister]  = useState(false);
   // Set for day schools on a weekend/holiday — the register isn't required, so the marking
   // grid is replaced with a notice instead of silently letting everyone default to "present".
   const [registerNotRequired, setRegisterNotRequired] = useState<{ reason: string } | null>(null);
@@ -388,8 +393,19 @@ export default function AppDashboard() {
   const [attFilter,       setAttFilter]       = useState<AttendanceStatus | 'all'>('all');
   const [loading,         setLoading]         = useState(true);
   const [showAddStudent,  setShowAddStudent]  = useState(false);
-  const [newStudent,      setNewStudent]      = useState({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
+  const [addingStudent,   setAddingStudent]   = useState(false);
+  // `classCode` here is the class this NEW student is being added to — it is always an explicit,
+  // required choice made in the Add Student form itself (see addStudent()), never silently
+  // inherited from whichever tab happens to be active. That's what guarantees a student can only
+  // ever be added to exactly one real class, never to "All School" or to more than one class.
+  const [newStudent,      setNewStudent]      = useState({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '', classCode: '' });
   const [showImportWizard, setShowImportWizard] = useState(false);
+  // True whenever the Register panel is being viewed with no specific class selected (admins
+  // default to "All School", which is a whole-school overview, not a class). A register is
+  // always tied to exactly one class — there is no such thing as a whole-school register — so
+  // while this is true the Register panel shows a class picker instead of any attendance UI,
+  // and saveRegister() refuses to run (belt-and-suspenders, in case this ever gets out of sync).
+  const [registerNeedsClassSelection, setRegisterNeedsClassSelection] = useState(false);
 
   const [msgBody,     setMsgBody]     = useState('');
   const [msgLinkWarning, setMsgLinkWarning] = useState(false);
@@ -421,6 +437,7 @@ export default function AppDashboard() {
 
   const [schoolInfo,     setSchoolInfo]     = useState<SchoolInfo | null>(null);
   const [settingsPhone,  setSettingsPhone]  = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
   const [classStructure, setClassStructure] = useState<ClassStructure | null>(null);
   const [activeAcademicYearId, setActiveAcademicYearId] = useState('');
 
@@ -541,10 +558,15 @@ export default function AppDashboard() {
    */
   async function loadTodayRegister() {
     if (activeClassCode === 'All School') {
-      // Admins browsing the whole school aren't marking a register — nothing to load.
+      // Admins browsing the whole school aren't marking a register — there is no such thing as
+      // a whole-school register. `registerNeedsClassSelection` (not `registerNotRequired`, which
+      // is reserved for "this specific class doesn't need one today") drives the Register panel
+      // to show a class picker instead of any attendance UI or Save button.
+      setRegisterNeedsClassSelection(true);
       setAttendance({}); setNotes({}); setRegisterLocked(false); setRegisterNotRequired(null);
       return;
     }
+    setRegisterNeedsClassSelection(false);
     const today = todayStr();
     const classRoster = students.filter(s => s.classCode === activeClassCode);
 
@@ -628,7 +650,19 @@ export default function AppDashboard() {
 
   async function saveRegister() {
     if (!userProfile || !schoolInfo) return;
+    // Defensive guard, independent of what the Register panel currently renders: a register is
+    // always for exactly one real class, never "All School" and never blank. This can never
+    // legitimately fire from the UI (the Save button doesn't render while
+    // `registerNeedsClassSelection` is true), but saveRegister must never trust UI state alone
+    // for something this consequential — this is what actually prevents a whole-school register
+    // from ever being written to Firestore.
+    if (!classCode || classCode === 'All School') {
+      toast('⚠️ Select a specific class before saving a register.');
+      return;
+    }
     if (registerNotRequired) { toast(`ℹ️ No register needed today — ${registerNotRequired.reason}.`); return; }
+    if (savingRegister) return; // guard against double-click resubmission
+    setSavingRegister(true);
     try {
       const today = todayStr();
       const regId = `${schoolId}_${classCode}_${today}`.replace(/\s/g, '_');
@@ -691,10 +725,33 @@ export default function AppDashboard() {
         toast(`✅ Register saved! ${result.sent} parent SMS sent. ${result.tokensUsed} tokens used.`);
       }
     } catch (e: any) { toast('❌ Save failed: ' + e.message); }
+    finally { setSavingRegister(false); }
   }
 
   async function addStudent() {
     if (!newStudent.name.trim() || !schoolId) return;
+
+    // A student is always added to exactly one explicit, real class — never inherited from
+    // whichever tab is active (that's what let a student get created with classCode
+    // "All School" in the first place), and never left to the caller's ambient state.
+    const targetClassCode = newStudent.classCode.trim();
+    if (!targetClassCode || targetClassCode === 'All School') {
+      toast('❌ Select a class for this student before adding them.');
+      return;
+    }
+    if (isAdmin) {
+      if (classStructure && !classStructure.classes.includes(targetClassCode)) {
+        toast(`❌ "${targetClassCode}" isn't a class at this school.`);
+        return;
+      }
+    } else if (!myAssignedClasses.includes(targetClassCode)) {
+      // A teacher admin can only ever add students to a class they're actually assigned to.
+      toast('❌ You can only add students to a class you teach.');
+      return;
+    }
+
+    if (addingStudent) return; // guard against double-click resubmission
+    setAddingStudent(true);
     try {
       let admissionNo: string;
       if (newStudent.admissionNo.trim()) {
@@ -710,15 +767,15 @@ export default function AppDashboard() {
           return;
         }
       } else {
-        admissionNo = generateAdmissionNo(schoolId, classCode, students.length);
+        admissionNo = generateAdmissionNo(schoolId, targetClassCode, students.length);
         // Extremely unlikely, but guard against the fallback colliding with a manually-entered one.
         while (students.some(s => normaliseAdmissionNo(s.admissionNo) === admissionNo)) {
-          admissionNo = generateAdmissionNo(schoolId, classCode, students.length);
+          admissionNo = generateAdmissionNo(schoolId, targetClassCode, students.length);
         }
       }
 
       const s = {
-        name: newStudent.name.trim(), admissionNo, classCode, schoolId,
+        name: newStudent.name.trim(), admissionNo, classCode: targetClassCode, schoolId,
         parentName: newStudent.parentName.trim(),
         parentPhone: newStudent.parentPhone.trim(),
         parentWhatsApp: newStudent.parentPhone.trim(),
@@ -729,7 +786,7 @@ export default function AppDashboard() {
       if (activeAcademicYearId) {
         try {
           const enrolment = await createEnrolment({
-            studentId: ref.id, schoolId, academicYearId: activeAcademicYearId, classCode,
+            studentId: ref.id, schoolId, academicYearId: activeAcademicYearId, classCode: targetClassCode,
           });
           currentEnrolmentId = enrolment.id;
         } catch (e) { console.error('Enrolment creation failed:', e); }
@@ -737,9 +794,10 @@ export default function AppDashboard() {
       setStudents(prev => [...prev, { id: ref.id, ...s, ...(currentEnrolmentId ? { currentEnrolmentId } : {}) }]);
       setAttendance(prev => ({ ...prev, [ref.id]: 'unmarked' }));
       setShowAddStudent(false);
-      setNewStudent({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
-      toast(`✅ Student added! Admission No. ${admissionNo}`);
+      setNewStudent({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '', classCode: '' });
+      toast(`✅ Student added to ${targetClassCode}! Admission No. ${admissionNo}`);
     } catch (e: any) { toast('❌ ' + e.message); }
+    finally { setAddingStudent(false); }
   }
 
   // What "Send" will actually message — the actual bug fix for issue #8/broadcast scoping:
@@ -793,11 +851,14 @@ export default function AppDashboard() {
 
   async function saveSettings() {
     if (!schoolInfo) return;
+    if (savingSettings) return; // guard against double-click resubmission
+    setSavingSettings(true);
     try {
       await updateDoc(doc(db, 'schools', schoolId), { phone: settingsPhone });
       setSchoolInfo(prev => prev ? { ...prev, phone: settingsPhone } : prev);
       toast('✅ Settings saved!');
     } catch (e: any) { toast('❌ ' + e.message); }
+    finally { setSavingSettings(false); }
   }
 
   const filteredStudents = scopedStudents.filter(s => {
@@ -1015,21 +1076,50 @@ export default function AppDashboard() {
               <div>
                 <div className="page-title">Today's Register</div>
                 <div className="page-sub">
-                  {classCode} · {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}
-                  {registerLoading ? ' · loading…' : registerLocked ? ' · 🔒 Saved & Locked' : ''}
+                  {registerNeedsClassSelection
+                    ? 'Select a class to begin'
+                    : <>{classCode} · {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}
+                        {registerLoading ? ' · loading…' : registerLocked ? ' · 🔒 Saved & Locked' : ''}</>}
                 </div>
               </div>
-              <div className="page-actions">
-                <div className="search-bar"><input type="text" placeholder="Search student..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
-                {registerNotRequired
-                  ? null
-                  : !registerLocked
-                    ? <button className="btn-primary" onClick={saveRegister}>💾 Save &amp; Notify Parents</button>
-                    : <button className="btn-secondary" onClick={() => toast('📥 PDF export coming soon!')}>📥 Export PDF</button>}
-              </div>
+              {!registerNeedsClassSelection && (
+                <div className="page-actions">
+                  <div className="search-bar"><input type="text" placeholder="Search student..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
+                  {registerNotRequired
+                    ? null
+                    : !registerLocked
+                      ? <button className="btn-primary" onClick={saveRegister} disabled={savingRegister}>
+                          {savingRegister ? '⏳ Saving…' : '💾 Save & Notify Parents'}
+                        </button>
+                      : <button className="btn-secondary" onClick={() => toast('📥 PDF export coming soon!')}>📥 Export PDF</button>}
+                </div>
+              )}
             </div>
             <div className="page-body">
-              {!registerNotRequired && !registerLocked && (counts.absent > 0 || counts.late > 0) && (
+              {registerNeedsClassSelection && (
+                <>
+                  <div className="notice notice-info" style={{ marginBottom: 16 }}>
+                    🏫 Registers are taken per class — there's no whole-school register. Choose a class below to load today's register for it.
+                  </div>
+                  <div className="card">
+                    <div className="card-header"><span className="card-title">Choose a class</span></div>
+                    <div className="card-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                      {(isAdmin ? (classStructure?.classes || []) : myAssignedClasses).length === 0 ? (
+                        <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+                          {isAdmin
+                            ? <>No classes set up yet. <span style={{ color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPanel('settings')}>Set up classes →</span></>
+                            : 'You have no assigned classes yet — ask your school admin to assign one.'}
+                        </div>
+                      ) : (
+                        (isAdmin ? (classStructure?.classes || []) : myAssignedClasses).map(c => (
+                          <button key={c} className="btn-secondary" onClick={() => switchActiveClass(c)}>{c}</button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+              {!registerNeedsClassSelection && !registerNotRequired && !registerLocked && (counts.absent > 0 || counts.late > 0) && (
                 <div className="notice notice-info">
                   📲 <strong>Auto-notify on save:</strong>{' '}
                   {counts.absent > 0 && <span>{counts.absent} absent</span>}
@@ -1043,19 +1133,19 @@ export default function AppDashboard() {
                   )}
                 </div>
               )}
-              {!registerNotRequired && registerLocked && (
+              {!registerNeedsClassSelection && !registerNotRequired && registerLocked && (
                 <div className="notice notice-locked">🔒 Register saved and locked. Attendance SMS sent automatically.</div>
               )}
-              {registerNotRequired && (
+              {!registerNeedsClassSelection && registerNotRequired && (
                 <div className="notice notice-info">
                   📅 No register needed for {classCode} today — {registerNotRequired.reason}.
                 </div>
               )}
-              {!registerNotRequired && scopedStudents.length === 0 && (
+              {!registerNeedsClassSelection && !registerNotRequired && scopedStudents.length === 0 && (
                 <div className="notice notice-info">No students yet in {classCode}. <span style={{ color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPanel('students')}>Add students →</span></div>
               )}
 
-              {!registerNotRequired && (
+              {!registerNeedsClassSelection && !registerNotRequired && (
               <div className="card">
                 <div className="card-header">
                   <div className="reg-summary">
@@ -1112,7 +1202,7 @@ export default function AppDashboard() {
               </div>
               )}
 
-              {!registerNotRequired && !registerLocked && schoolInfo && (counts.absent > 0 || counts.late > 0) && (
+              {!registerNeedsClassSelection && !registerNotRequired && !registerLocked && schoolInfo && (counts.absent > 0 || counts.late > 0) && (
                 <div className="card">
                   <div className="card-header">
                     <span className="card-title">📱 SMS Preview</span>
@@ -1155,7 +1245,18 @@ export default function AppDashboard() {
                 <div className="search-bar"><input type="text" placeholder="Search..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
                 <button className="btn-secondary" onClick={() => setTransferDialog({ mode: 'in' })}>↘ Transfer In</button>
                 <button className="btn-secondary" onClick={() => setShowImportWizard(true)}>⬆ Import</button>
-                <button className="btn-primary" onClick={() => setShowAddStudent(true)}>+ Add Student</button>
+                <button className="btn-primary" onClick={() => {
+                  // Pre-fill the form's class field with whatever real class is currently active,
+                  // as a convenience — but never with "All School": if that's the active tab (an
+                  // admin's default view), the admin still has to make an explicit choice in the
+                  // form below before they can add anyone.
+                  const isRealActiveClass = isAdmin
+                    ? activeClassCode !== 'All School' && !!classStructure?.classes.includes(activeClassCode)
+                    : myAssignedClasses.includes(activeClassCode);
+                  const defaultClass = isRealActiveClass ? activeClassCode : (isAdmin ? '' : (myAssignedClasses[0] || ''));
+                  setNewStudent(p => ({ ...p, classCode: defaultClass }));
+                  setShowAddStudent(true);
+                }}>+ Add Student</button>
               </div>
             </div>
             <div className="page-body">
@@ -1179,6 +1280,37 @@ export default function AppDashboard() {
                     <button className="modal-close" onClick={() => setShowAddStudent(false)}>✕</button>
                   </div>
                   <div className="card-body">
+                    <div className="form-group" style={{ marginBottom: 16 }}>
+                      <label className="form-label">Class *</label>
+                      {isAdmin ? (
+                        <select
+                          className="form-input"
+                          value={newStudent.classCode}
+                          onChange={e => setNewStudent(p => ({ ...p, classCode: e.target.value }))}
+                        >
+                          <option value="">Select a class…</option>
+                          {(classStructure?.classes || []).map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      ) : myAssignedClasses.length > 1 ? (
+                        <select
+                          className="form-input"
+                          value={newStudent.classCode}
+                          onChange={e => setNewStudent(p => ({ ...p, classCode: e.target.value }))}
+                        >
+                          <option value="">Select a class…</option>
+                          {myAssignedClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      ) : (
+                        // A single-class teacher has nothing to choose between — their one class
+                        // is the only place they're allowed to add a student, so it's locked in.
+                        <input className="form-input" value={newStudent.classCode || myAssignedClasses[0] || ''} disabled readOnly />
+                      )}
+                      {!newStudent.classCode && (
+                        <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>
+                          A class is required before this student can be added — there's no way to add to the whole school or to more than one class at once.
+                        </div>
+                      )}
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                       {[
                         { label: 'Student Name *',        key: 'name',        type: 'text', placeholder: 'Full name' },
@@ -1195,8 +1327,10 @@ export default function AppDashboard() {
                       ))}
                     </div>
                     <div style={{ marginTop: 16, display: 'flex', gap: 12 }}>
-                      <button className="btn-primary" onClick={addStudent}>Add Student</button>
-                      <button className="btn-secondary" onClick={() => setShowAddStudent(false)}>Cancel</button>
+                      <button className="btn-primary" onClick={addStudent} disabled={addingStudent || !newStudent.name.trim() || !newStudent.classCode}>
+                        {addingStudent ? '⏳ Adding…' : 'Add Student'}
+                      </button>
+                      <button className="btn-secondary" onClick={() => setShowAddStudent(false)} disabled={addingStudent}>Cancel</button>
                     </div>
                   </div>
                 </div>
@@ -1653,7 +1787,9 @@ export default function AppDashboard() {
                       <label className="form-label">Admin Phone</label>
                       <input className="form-input" defaultValue={userProfile.phone || ''} />
                     </div>
-                    <button className="btn-primary" onClick={saveSettings}>Save Changes</button>
+                    <button className="btn-primary" onClick={saveSettings} disabled={savingSettings}>
+                      {savingSettings ? '⏳ Saving…' : 'Save Changes'}
+                    </button>
                   </div>
                 </div>
                 <div className="card">
@@ -1812,6 +1948,7 @@ export default function AppDashboard() {
         tokens={tokens}
         onTopUp={() => setShowTopUp(true)}
         onSignOut={async () => { await logOut(); navigate('/'); }}
+        onContactUs={() => setShowContact(true)}
       />
 
       <ContactUs isOpen={showContact} onClose={() => setShowContact(false)} />

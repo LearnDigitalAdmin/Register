@@ -131,7 +131,7 @@ export default function Landing() {
             Kenya's smartest<br /><em style={{ fontStyle: 'normal', color: 'var(--mint)' }}>school register.</em>
           </h1>
           <p className="hero-p">
-            Digital attendance, SMS parent notifications, assignment sharing, and full analytics — built for CBC and 8-4-4. Free platform, pay only for SMS messages.
+            Mark attendance in seconds, notify parents by SMS the moment a child is absent, and keep a full digital record — built for CBC and 8-4-4 classrooms. The platform is free; you only pay for the SMS you send.
           </p>
           <div className="hero-btns">
             <button
@@ -203,46 +203,56 @@ export default function Landing() {
 
       {/* FEATURES */}
       <section id="features" className="section-pad">
-        <div style={{ textAlign: 'center', marginBottom: 48 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--mint)', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 }}>Our Products</div>
-          <h2 className="section-h2">Everything your school needs.</h2>
-          <p style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', fontFamily: "'Literata',serif" }}>One platform. Multiple tools. Built for Kenyan schools.</p>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--mint)', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 }}>What MyRegister does</div>
+          <h2 className="section-h2">Attendance and parent SMS, done properly.</h2>
+          <p style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', fontFamily: "'Literata',serif" }}>The only two things a register app has to get right — so that's what we focused on.</p>
         </div>
-        <div className="features-grid">
+
+        {/* Core capabilities — the live product, given real weight instead of being one of six equal cards */}
+        <div className="features-grid" style={{ marginBottom: 40 }}>
           {[
-            { icon: '📋', label: 'School Registry', title: 'Smart Attendance & Parent Comms', desc: 'Digital registers with one-tap marking, SMS parent notifications, assignment sharing, and full attendance history with exportable PDFs.', live: true },
-            { icon: '📚', label: 'Library System', title: 'Library Management', desc: 'Track books by class, subject, language. Issue books to students with QR code generation, and manage returns, conditions, and lost items.', live: false },
-            { icon: '💰', label: 'Fee Management', title: 'Fee Collection & Receipting', desc: 'Track fee payments, send M-Pesa reminders, generate receipts, and manage arrears reports for every student.', live: false },
-            { icon: '📝', label: 'Exams', title: 'Exam & Results Management', desc: 'Enter marks, auto-compute CBC or 8-4-4 grades, generate printable report cards, and push results directly to parents via SMS.', live: false },
-            { icon: '👩‍💼', label: 'HR & Staff', title: 'Staff & HR Register', desc: 'Leave management, timetables, TSC number tracking, and payroll summaries for all teaching and support staff.', live: false },
-            { icon: '🔧', label: 'Inventory', title: 'Asset & Inventory Register', desc: 'Track school furniture, computers, lab equipment, and sports gear.', live: false },
+            { icon: '📋', title: 'One-tap daily register', desc: 'Mark present, absent, late, or excused for a whole class in under a minute, with a weekend- and holiday-aware register so no one has to mark a day that never needed one.' },
+            { icon: '📲', title: 'Instant parent SMS', desc: 'The moment a register is saved, parents of absent or late students get an SMS automatically — no separate step, no forgetting to notify anyone.' },
+            { icon: '📊', title: 'Reports that write themselves', desc: 'Weekly and termly attendance reports, exportable and ready to hand to a head teacher, with a full history behind every student.' },
           ].map(s => (
-            <div
-              key={s.title}
-              onClick={s.live ? () => navigate('/signup') : undefined}
-              style={{
-                background: s.live ? 'rgba(0,200,150,.05)' : 'rgba(255,255,255,.04)',
-                border: `1px solid ${s.live ? 'rgba(0,200,150,.25)' : 'rgba(255,255,255,.08)'}`,
-                borderRadius: 20, padding: '24px 20px',
-                cursor: s.live ? 'pointer' : 'default',
-                position: 'relative', transition: '.3s',
-              }}
-            >
-              <span style={{
-                position: 'absolute', top: 16, right: 16,
-                padding: '4px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700,
-                background: s.live ? 'rgba(0,200,150,.15)' : 'rgba(255,255,255,.06)',
-                color: s.live ? 'var(--mint)' : 'rgba(255,255,255,.35)',
-                border: `1px solid ${s.live ? 'rgba(0,200,150,.3)' : 'rgba(255,255,255,.1)'}`,
-              }}>
-                {s.live ? 'LIVE' : 'COMING SOON'}
-              </span>
-              <div style={{ width: 48, height: 48, borderRadius: 12, background: s.live ? 'rgba(0,200,150,.15)' : 'rgba(255,255,255,.07)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 16 }}>{s.icon}</div>
-              <div style={{ fontSize: 10, fontWeight: 600, color: s.live ? 'var(--mint)' : 'rgba(255,255,255,.3)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>{s.label}</div>
+            <div key={s.title} style={{
+              background: 'rgba(0,200,150,.05)', border: '1px solid rgba(0,200,150,.25)',
+              borderRadius: 20, padding: '24px 20px',
+            }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(0,200,150,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 16 }}>{s.icon}</div>
               <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>{s.title}</h3>
               <p style={{ fontSize: 13, color: 'rgba(255,255,255,.5)', lineHeight: 1.7 }}>{s.desc}</p>
             </div>
           ))}
+        </div>
+
+        {/* Roadmap — compact strip instead of six equal-weight cards, so it reads as "what's next" not "what's missing" */}
+        <div style={{
+          background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)',
+          borderRadius: 16, padding: '20px 22px',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,.35)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14 }}>
+            Coming to the Cogvana platform
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {[
+              { icon: '📚', label: 'Library Management' },
+              { icon: '💰', label: 'Fee Collection & Receipting' },
+              { icon: '📝', label: 'Exam & Results Management' },
+              { icon: '👩‍💼', label: 'Staff & HR Register' },
+              { icon: '🔧', label: 'Asset & Inventory Register' },
+            ].map(s => (
+              <div key={s.label} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 14px', borderRadius: 20,
+                background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
+                fontSize: 12, color: 'rgba(255,255,255,.55)',
+              }}>
+                <span>{s.icon}</span>{s.label}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

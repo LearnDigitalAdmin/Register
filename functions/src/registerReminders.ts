@@ -98,7 +98,7 @@ async function findUnmarkedClassesBySchool(): Promise<Map<string, { school: Scho
  * "avoid spamming" requirement.
  */
 export const registerReminder10am = onSchedule(
-  { schedule: "0 10 * * *", timeZone: "Africa/Nairobi", region: "africa-south1", memory: "256MiB", timeoutSeconds: 300 },
+  { schedule: "0 10 * * *", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300 },
   async () => {
     const bySchool = await findUnmarkedClassesBySchool();
 
@@ -147,7 +147,7 @@ export const registerReminder10am = onSchedule(
  * records that it was NOT marked in time, it doesn't close the class out.
  */
 export const registerFinaliseUnmarkedNoon = onSchedule(
-  { schedule: "0 12 * * *", timeZone: "Africa/Nairobi", region: "africa-south1", memory: "256MiB", timeoutSeconds: 300 },
+  { schedule: "0 12 * * *", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300 },
   async () => {
     const bySchool = await findUnmarkedClassesBySchool();
     const today = todayEAT();
