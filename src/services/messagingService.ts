@@ -14,11 +14,14 @@ import {
   Student,
   AttendanceStatus,
   SmsTier,
+  BoardingType,
   sanitiseSmsText,
   countSmsSegments,
   calcTokenCost,
   getSmsTier,
   KES_RATE_PER_TOKEN,
+  containsLink,
+  stripLinks,
 } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -28,6 +31,7 @@ export interface SchoolInfo {
   name: string;
   phone: string;
   county?: string;
+  boardingType?: BoardingType;
 }
 
 export interface SenderInfo {
@@ -255,8 +259,8 @@ export async function sendRegisterNotifications(params: {
   const jobs: SmsJob[] = [];
 
   for (const student of students) {
-    const status = attendance[student.id] ?? 'present';
-    if (status === 'excused')                 continue;
+    const status = attendance[student.id] ?? 'unmarked';
+    if (status === 'excused' || status === 'unmarked') continue;
     if (status === 'present' && !sendPresent) continue;
     if (!student.parentPhone?.trim())         continue;
 
@@ -361,8 +365,17 @@ export async function sendBroadcast(params: {
   school: SchoolInfo;
   type: string;
   recipientsLabel: string;
-}): Promise<{ sent: number; failed: number; tokensUsed: number; error?: string }> {
-  const { bodyText, recipients, sender, school, type, recipientsLabel } = params;
+}): Promise<{ sent: number; failed: number; tokensUsed: number; error?: string; linksRemoved?: boolean }> {
+  const { recipients, sender, school, type, recipientsLabel } = params;
+
+  // Links are never allowed in parent messages (phishing/spam risk) — this is the final
+  // checkpoint before anything reaches the send function, even if the compose UI's live
+  // cleaning was somehow bypassed.
+  const linksRemoved = containsLink(params.bodyText);
+  const bodyText = stripLinks(params.bodyText);
+  if (!bodyText.trim()) {
+    return { sent: 0, failed: 0, tokensUsed: 0, error: 'Message is empty after removing links — links are not allowed in parent messages.', linksRemoved };
+  }
 
   const sample      = sanitiseSmsText(buildMessage('Parent', bodyText, school.name, school.phone));
   const segments    = countSmsSegments(sample);
@@ -371,7 +384,7 @@ export async function sendBroadcast(params: {
 
   if (sender.messageTokens < totalTokens) {
     return { sent: 0, failed: recipients.length, tokensUsed: 0,
-      error: `Insufficient tokens. Need ${totalTokens}, available ${sender.messageTokens}.` };
+      error: `Insufficient tokens. Need ${totalTokens}, available ${sender.messageTokens}.`, linksRemoved };
   }
 
   const phones = recipients
@@ -379,7 +392,7 @@ export async function sendBroadcast(params: {
     .map(r => r.parentPhone);
 
   if (phones.length === 0) {
-    return { sent: 0, failed: 0, tokensUsed: 0, error: 'No recipients with a phone number.' };
+    return { sent: 0, failed: 0, tokensUsed: 0, error: 'No recipients with a phone number.', linksRemoved };
   }
 
   // Single bulk call — cloud function accepts string[] and joins to a comma-separated
@@ -411,5 +424,5 @@ export async function sendBroadcast(params: {
     delivered: sent, total: phones.length,
   });
 
-  return { sent, failed, tokensUsed, error: result.error };
+  return { sent, failed, tokensUsed, error: result.error, linksRemoved };
 }

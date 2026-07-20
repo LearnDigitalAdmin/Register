@@ -1,7 +1,7 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
-  AcademicYear, ClassStructure, Curriculum, CURRICULUM_LEVELS, StreamMode,
+  AcademicYear, ClassStructure, Curriculum, CURRICULUM_LEVELS, School, StreamMode,
 } from '../types';
 
 /** Normalise a raw KNEC code into a Firestore-safe doc id. */
@@ -19,6 +19,17 @@ export async function isKnecCodeTaken(knecCode: string): Promise<boolean> {
   const code = normaliseKnecCode(knecCode);
   const snap = await getDoc(doc(db, 'schools', code));
   return snap.exists();
+}
+
+/** Public-facing school info (name, level, boarding type) for the teacher "Find School" signup
+ * step — the name is then locked/pre-filled rather than left as a free-text field, since it's
+ * irrelevant (and risky) for a joining teacher to be able to edit it. */
+export async function getSchoolBasicInfo(knecCode: string): Promise<Pick<School, 'id' | 'name' | 'boardingType' | 'schoolLevel'> | null> {
+  const code = normaliseKnecCode(knecCode);
+  const snap = await getDoc(doc(db, 'schools', code));
+  if (!snap.exists()) return null;
+  const d = snap.data() as School;
+  return { id: code, name: d.name, boardingType: d.boardingType, schoolLevel: d.schoolLevel };
 }
 
 /** Slice the full curriculum level list down to startingClass..graduatingClass inclusive. */

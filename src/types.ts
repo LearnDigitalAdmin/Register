@@ -1,4 +1,6 @@
-export type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused';
+/** `unmarked` is the default state for every student until a teacher actually marks the
+ * register (or the noon auto-unmarked job runs) — the app must never assume `present`. */
+export type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused' | 'unmarked';
 export type UserRole = 'schoolAdmin' | 'teacherAdmin';
 
 export interface UserProfile {
@@ -165,12 +167,36 @@ export interface TeacherTransferRecord {
   reason?: string;
 }
 
+/** Whether the school boards students overnight. Drives register-availability rules:
+ * boarding schools mark a register every day of the year; day schools don't need one
+ * on weekends/public holidays. */
+export type BoardingType = 'day' | 'boarding';
+
+/** Broad Kenyan schooling bands (CBC-aligned, but also used to describe 8-4-4 schools). */
+export type SchoolLevel = 'pre-primary' | 'full-primary' | 'junior-school' | 'senior-school';
+
+export const SCHOOL_LEVEL_LABELS: Record<SchoolLevel, string> = {
+  'pre-primary':   'Pre-Primary (PP1–PP2)',
+  'full-primary':  'Full Primary (Grade 1–6 / Class 1–8)',
+  'junior-school': 'Junior School (Grade 7–9)',
+  'senior-school': 'Senior School (Grade 10–12 / Form 1–4)',
+};
+export const SCHOOL_LEVELS: SchoolLevel[] = ['pre-primary', 'full-primary', 'junior-school', 'senior-school'];
+
+export const BOARDING_TYPE_LABELS: Record<BoardingType, string> = {
+  day: 'Day School',
+  boarding: 'Boarding School',
+};
+
 export interface School {
   id: string;                   // KNEC code
   knecCode: string;
   name: string;
   county: string;
-  type: string;                 // Primary / Secondary / Mixed Day / Boarding etc.
+  /** @deprecated free-text legacy field, kept for older records — use `boardingType` and `schoolLevel`. */
+  type?: string;
+  boardingType: BoardingType;
+  schoolLevel: SchoolLevel;
   curriculum: Curriculum;
   startingClass: string;
   graduatingClass: string;
@@ -196,6 +222,24 @@ export interface Student {
   nationalId?: string;
   currentEnrolmentId?: string;  // set once Phase 2 (promotion engine) is wired in
   archived?: boolean;           // true once graduated into the global archivedStudents collection
+}
+
+/** Admission numbers may be teacher-entered (letters + numbers, e.g. "ADM-2026-014") or
+ * left blank to auto-generate. Normalised to uppercase with internal whitespace removed. */
+export function normaliseAdmissionNo(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, '');
+}
+
+export function isValidAdmissionNo(raw: string): boolean {
+  const v = normaliseAdmissionNo(raw);
+  return v.length >= 2 && v.length <= 24 && /^[A-Z0-9\/-]+$/.test(v);
+}
+
+/** Best-effort collision-avoiding fallback admission number when a teacher leaves the field blank. */
+export function generateAdmissionNo(schoolId: string, classCode: string, existingCount: number): string {
+  const seq = (existingCount + 1).toString().padStart(4, '0');
+  const suffix = Math.random().toString(36).slice(2, 4).toUpperCase();
+  return `${schoolId.slice(-4)}-${classCode.replace(/\s+/g, '')}-${seq}${suffix}`;
 }
 
 export interface AttendanceRecord {
@@ -257,6 +301,21 @@ export function sanitiseSmsText(raw: string): string {
     .trim();
 }
 
+/** Matches http(s)/www links and bare domain-looking strings (e.g. "bit.ly/x", "example.com").
+ * Deliberately broad — false positives (blocking a message that merely mentions a domain-like
+ * word) are far cheaper than a false negative (a link slipping through to a parent's phone). */
+const LINK_PATTERN = /((https?:\/\/|www\.)\S+)|(\b[a-z0-9-]+\.(com|co\.ke|ke|org|net|info|xyz|link|io|me|ly|app|shop)\b\S*)/gi;
+
+export function containsLink(text: string): boolean {
+  return LINK_PATTERN.test(text);
+}
+
+/** Removes any link-like substrings from a message body. Used both live in the compose box
+ * and as a final belt-and-braces pass before a message is ever queued for sending. */
+export function stripLinks(text: string): string {
+  return text.replace(LINK_PATTERN, '[link removed]').replace(/ {2,}/g, ' ').trim();
+}
+
 /**
  * Calculate total token cost.
  * 1 token = 1 SMS part per recipient (regardless of tier).
@@ -311,13 +370,19 @@ export interface RegisterDay {
   schoolId: string;
   savedBy: string;
   savedAt: string;
+  /** True once a teacher has actually saved the register. The noon auto-unmarked job writes
+   * a register doc with `locked: false` so admins can see it was never marked, without
+   * blocking a teacher from still marking it properly later in the day. */
   locked: boolean;
   present: number;
   absent: number;
   late: number;
   excused: number;
+  unmarked: number;
   total: number;
   academicYearId?: string;
+  /** True only when this doc was written by the noon scheduled job, not a teacher. */
+  autoUnmarked?: boolean;
 }
 
 /** A per-academic-year snapshot kept on an archived (graduated) student record. */

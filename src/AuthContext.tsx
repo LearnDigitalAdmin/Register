@@ -9,8 +9,10 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import type { UserProfile, Curriculum, StreamMode } from './types';
+import type { UserProfile, Curriculum, StreamMode, BoardingType, SchoolLevel, TeacherAssignment } from './types';
 import { createAcademicSetup, isKnecCodeTaken, isValidKnecCode, normaliseKnecCode } from './services/academicYearService';
+import { assignmentId, getTeachersForClass } from './services/teacherAssignmentService';
+import { isSafaricomPhone } from './utils/phoneValidation';
 
 interface AuthContextType {
   user: User | null;
@@ -24,6 +26,8 @@ interface AuthContextType {
 
 interface SignUpParams {
   email: string;
+  /** Required for every account — used for the daily register-reminder SMS, so it must be a
+   * genuine Safaricom number (validated in `signUp` below). */
   phone: string;
   password: string;
   displayName: string;
@@ -34,9 +38,10 @@ interface SignUpParams {
   county?: string;
   /** School contact number shown in every SMS footer */
   schoolPhone?: string;
-  schoolType?: string;
   /** The following are required for role === 'schoolAdmin' (new school registration) */
   knecCode?: string;
+  boardingType?: BoardingType;
+  schoolLevel?: SchoolLevel;
   curriculum?: Curriculum;
   startingClass?: string;
   graduatingClass?: string;
@@ -79,7 +84,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signUp(params: SignUpParams) {
     const {
       email, phone, password, displayName, role,
-      schoolName, classCode, county, schoolPhone, schoolType,
+      schoolName, classCode, county, schoolPhone,
+      boardingType, schoolLevel,
       curriculum, startingClass, graduatingClass,
       streamsEnabled, streamMode, uniformStreams, perClassStreams,
     } = params;
@@ -87,7 +93,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let schoolId = params.schoolId || '';
 
     // Client-side shape validation only — no Firestore reads here, since the user
-    // isn't authenticated yet and `schools` (correctly) requires auth to read.
+    // isn't authenticated yet and most collections (correctly) require auth to read.
+    if (!isSafaricomPhone(phone)) {
+      throw new Error('Enter a valid Safaricom phone number (e.g. 07XX XXX XXX) — it\'s used for daily register reminders.');
+    }
     if (role === 'schoolAdmin') {
       if (!params.knecCode || !isValidKnecCode(params.knecCode)) {
         throw new Error('Enter a valid KNEC school code (letters, numbers, and dashes only).');
@@ -95,9 +104,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!curriculum || !startingClass || !graduatingClass) {
         throw new Error('Select a curriculum, starting class, and graduating class.');
       }
+      if (!boardingType) throw new Error('Select whether the school is Day or Boarding.');
+      if (!schoolLevel) throw new Error('Select the school level.');
       schoolId = normaliseKnecCode(params.knecCode);
     } else if (role === 'teacherAdmin') {
       schoolId = normaliseKnecCode(params.schoolId || '');
+      if (!schoolId) throw new Error('Find your school before signing up.');
     }
 
     const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -124,7 +136,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         knecCode:   schoolId,
         name:       schoolName,
         county:     county || 'Kenya',
-        type:       schoolType || 'Primary',
+        boardingType,
+        schoolLevel,
         curriculum,
         startingClass,
         graduatingClass,
@@ -151,6 +164,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
+    // Class lock: a brand-new teacher can't claim a class another active teacher already
+    // holds. Checked now (post-auth, since `teacherAssignments` reads require sign-in) and
+    // BEFORE the profile is written, so a rejected signup never leaves a half-created account
+    // behind — same pattern as the KNEC-taken check above.
+    if (role === 'teacherAdmin' && classCode) {
+      const holders = await getTeachersForClass(schoolId, classCode);
+      if (holders.length > 0) {
+        await cred.user.delete();
+        throw new Error(`${classCode} already has a teacher assigned. Ask your school admin to check the class list, or pick a different class.`);
+      }
+    }
+
     const profile: UserProfile = {
       uid:           cred.user.uid,
       email,
@@ -159,12 +184,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role,
       schoolId,
       schoolName,
-      ...(classCode ? { classCode } : {}),
+      ...(classCode ? { classCode, assignedClasses: [classCode], lastActiveClass: classCode } : {}),
       createdAt:     new Date().toISOString(),
       messageTokens: 100,
     };
 
     await setDoc(doc(db, 'users', cred.user.uid), profile);
+
+    // Now that the profile exists (role/schoolId resolvable by the rules engine), record the
+    // assignment itself — self-service, so it's tagged `assignedBy: self` and can never be
+    // used to plant an assignment for someone else (enforced in firestore.rules).
+    if (role === 'teacherAdmin' && classCode) {
+      const id = assignmentId(schoolId, cred.user.uid, classCode);
+      const assignment: TeacherAssignment = {
+        id, schoolId, teacherUid: cred.user.uid, teacherName: displayName, classCode,
+        assignedAt: new Date().toISOString(), assignedBy: cred.user.uid, active: true,
+      };
+      await setDoc(doc(db, 'teacherAssignments', id), assignment);
+    }
 
     if (phone) {
       const normalised = normalisePhone(phone);

@@ -49,7 +49,9 @@ service cloud.firestore {
     // Doc id = KNEC code. `resource == null` only when the code has never been
     // registered, so this also rejects a second school trying to claim the same code.
     match /schools/{schoolId} {
-      allow read: if request.auth != null;
+      // Public read: a prospective teacher looks a school up by its KNEC code (name, level,
+      // boarding type) on the "Find School" step of signup, before they have an account.
+      allow read: if true;
       allow write: if request.auth != null &&
         (resource == null || resource.data.adminUid == request.auth.uid);
     }
@@ -57,7 +59,9 @@ service cloud.firestore {
     // NOTE: the `schools/{schoolId}` doc must exist (and have adminUid set to the caller) BEFORE
     // this write happens — see AuthContext.signUp, which now creates the school doc first.
     match /classStructures/{schoolId} {
-      allow read: if request.auth != null;
+      // Same public-read reasoning as `schools/{schoolId}` above — the class list is needed
+      // for the pre-signup "Find School" lookup.
+      allow read: if true;
       allow write: if request.auth != null &&
         get(/databases/$(database)/documents/schools/$(schoolId)).data.adminUid == request.auth.uid;
     }
@@ -75,7 +79,12 @@ service cloud.firestore {
       allow write: if isSchoolAdminOf(schoolId);
     }
     match /students/{id} {
-      allow read: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      // Read is school-wide (not class-scoped): a school-wide `where('schoolId','==',…)` query
+      // must be provably valid for Firestore to run it at all for a class-restricted teacher,
+      // and admission-number uniqueness has to be checked against the whole school roster, not
+      // just one class. What a teacher can actually DO with a student outside their class is
+      // still fully locked down below — only reads are broadened.
+      allow read: if resource != null && isSchoolMember(resource.data.schoolId);
       allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
       // Update: need access via the class the student is currently in OR the class they're
       // moving to, so a transfer/internal-move by an authorised teacher/admin isn't blocked.
@@ -86,7 +95,7 @@ service cloud.firestore {
     // References a student + academic year rather than being embedded on the student doc,
     // so a student can have one row per year without ever overwriting prior years.
     match /enrolments/{id} {
-      allow read: if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+      allow read: if resource != null && isSchoolMember(resource.data.schoolId);
       allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
       allow update: if hasClassAccess(resource.data.schoolId, resource.data.classCode) ||
                        hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
@@ -119,9 +128,19 @@ service cloud.firestore {
     // A teacher's assignment to a single class. Only the school's admin may assign/unassign;
     // the teacher themself (or the school's admin) may read their own assignments.
     match /teacherAssignments/{id} {
-      allow read: if resource != null &&
-        (isSchoolAdminOf(resource.data.schoolId) || request.auth.uid == resource.data.teacherUid);
-      allow create: if isSchoolAdminOf(request.resource.data.schoolId);
+      // Any signed-in user can read: the class-lock check (both at signup, before a class can
+      // be claimed, and in the admin's Assignment Manager) needs to see who else already
+      // teaches a class, not just the caller's own assignment. Assignment records aren't
+      // sensitive — mirrors the same openness as `users/{userId}` read below.
+      allow read: if isSignedIn();
+      allow create: if isSchoolAdminOf(request.resource.data.schoolId) ||
+        // Self-signup: a brand-new teacher account creating ITS OWN first assignment record
+        // for the class it just claimed. `assignedBy == self` marks it as self-service so this
+        // branch can never be used to plant an assignment for someone else.
+        (isSignedIn() && myRole() == 'teacherAdmin' && mySchoolId() == request.resource.data.schoolId &&
+         request.auth.uid == request.resource.data.teacherUid &&
+         request.resource.data.assignedBy == request.auth.uid &&
+         request.resource.data.active == true);
       // Admin can update (re-assign) at their own school. A teacher may ONLY deactivate their
       // own assignment (as part of a self-service school transfer) — never reactivate one,
       // touch anyone else's, or change which class/school it points to.

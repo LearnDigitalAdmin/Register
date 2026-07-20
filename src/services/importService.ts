@@ -5,7 +5,7 @@ import { db } from '../firebase';
 import {
   ClassStructure, Student, Enrolment,
   ImportFieldKey, ImportColumnMapping, ImportRow, ImportRowIssue, ImportSummary,
-  IMPORT_REQUIRED_FIELDS,
+  IMPORT_REQUIRED_FIELDS, normaliseAdmissionNo,
 } from '../types';
 import { normalisePhone } from '../utils/phoneValidation';
 
@@ -165,7 +165,7 @@ export interface ValidationContext {
 /** Validates all rows in place (mutates issues/isValid), including cross-row duplicate detection. */
 export function validateRows(rows: ImportRow[], ctx: ValidationContext): ImportRow[] {
   const seenAdmissionNos = new Map<string, number>(); // admissionNo -> first rowIndex seen in this file
-  const existingAdmissionNos = new Set(ctx.existingStudents.map(s => s.admissionNo.trim().toLowerCase()));
+  const existingAdmissionNos = new Set(ctx.existingStudents.map(s => normaliseAdmissionNo(s.admissionNo)));
   const existingNameKeys = new Set(ctx.existingStudents.map(s => `${s.name.trim().toLowerCase()}|${(s.parentPhone || '').trim()}`));
   const seenNameKeys = new Map<string, number>();
 
@@ -179,7 +179,7 @@ export function validateRows(rows: ImportRow[], ctx: ValidationContext): ImportR
     if (!admissionNo) {
       issues.push({ type: 'missing_admission_no', field: 'admissionNo', message: 'Admission number is missing.' });
     } else {
-      const key = admissionNo.toLowerCase();
+      const key = normaliseAdmissionNo(admissionNo);
       if (existingAdmissionNos.has(key)) {
         issues.push({ type: 'duplicate_admission_no', field: 'admissionNo', message: `Admission No. "${admissionNo}" already exists for this school.` });
       } else if (seenAdmissionNos.has(key)) {

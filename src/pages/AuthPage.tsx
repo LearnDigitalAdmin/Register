@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import { Curriculum, CURRICULUM_LEVELS, StreamMode } from '../types';
-import { getClassStructure, resolveLevels } from '../services/academicYearService';
+import {
+  BoardingType, BOARDING_TYPE_LABELS, Curriculum, CURRICULUM_LEVELS, SchoolLevel,
+  SCHOOL_LEVELS, SCHOOL_LEVEL_LABELS, StreamMode,
+} from '../types';
+import { getClassStructure, getSchoolBasicInfo, resolveLevels } from '../services/academicYearService';
+import { isSafaricomPhone } from '../utils/phoneValidation';
 
 type Tab = 'login' | 'signup';
 
@@ -28,13 +32,15 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
 // and the map:
 
   const [suSchoolName, setSuSchoolName] = useState('');
+  const [suSchoolNameLocked, setSuSchoolNameLocked] = useState(false); // teacher joining: locked once "Find School" succeeds
   const [suSchoolId, setSuSchoolId] = useState(''); // for teachers joining — the school's KNEC code
   const [suClass, setSuClass] = useState('');
   const [suCounty, setSuCounty] = useState('');
 
   // School admin — new-school academic setup
   const [suKnecCode, setSuKnecCode] = useState('');
-  const [suSchoolType, setSuSchoolType] = useState('Primary');
+  const [suBoardingType, setSuBoardingType] = useState<BoardingType>('day');
+  const [suSchoolLevel, setSuSchoolLevel] = useState<SchoolLevel>('full-primary');
   const [suCurriculum, setSuCurriculum] = useState<Curriculum>('CBC');
   const [suStartingClass, setSuStartingClass] = useState('');
   const [suGraduatingClass, setSuGraduatingClass] = useState('');
@@ -57,12 +63,20 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
     setSuTeacherClassesLoading(true);
     setSuTeacherClassesError('');
     setSuTeacherClasses(null);
+    setSuSchoolNameLocked(false);
     try {
-      const structure = await getClassStructure(suSchoolId);
-      if (!structure) {
+      const [structure, info] = await Promise.all([
+        getClassStructure(suSchoolId),
+        getSchoolBasicInfo(suSchoolId),
+      ]);
+      if (!structure || !info) {
         setSuTeacherClassesError('No school found for that KNEC code. Check the code with your admin.');
       } else {
         setSuTeacherClasses(structure.classes);
+        // The school name is irrelevant for a joining teacher to edit, so it's pre-filled and
+        // locked the moment we have a confirmed match for the code they entered.
+        setSuSchoolName(info.name);
+        setSuSchoolNameLocked(true);
       }
     } catch {
       setSuTeacherClassesError('Could not look up that school. Check the code and try again.');
@@ -89,7 +103,11 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
     setError('');
     if (suPw !== suPw2) { setError('Passwords do not match.'); return; }
     if (suPw.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (!suPhone && !suEmail) { setError('Please provide an email or phone number.'); return; }
+    if (!suEmail.trim()) { setError('Please provide an email address.'); return; }
+    if (!isSafaricomPhone(suPhone)) {
+      setError('Enter a valid Safaricom phone number (e.g. 0722 123 456) — it\'s used for daily register reminders.');
+      return;
+    }
 
     if (suRole === 'schoolAdmin') {
       if (!suKnecCode.trim()) { setError('Enter your school\'s KNEC code.'); return; }
@@ -97,6 +115,9 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
       if (suStreamsEnabled && suStreamMode === 'uniform' && !suUniformStreamsText.trim()) {
         setError('Add at least one stream (e.g. A, B).'); return;
       }
+    } else {
+      if (!suSchoolNameLocked) { setError('Find your school using its KNEC code before signing up.'); return; }
+      if (!suClass.trim()) { setError('Select your class.'); return; }
     }
 
     setLoading(true);
@@ -117,7 +138,8 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
         schoolId: suRole === 'teacherAdmin' ? suSchoolId.trim() : undefined,
         classCode: suRole === 'teacherAdmin' ? suClass.trim() : undefined,
         county: suCounty.trim(),
-        schoolType: suRole === 'schoolAdmin' ? suSchoolType : undefined,
+        boardingType: suRole === 'schoolAdmin' ? suBoardingType : undefined,
+        schoolLevel: suRole === 'schoolAdmin' ? suSchoolLevel : undefined,
         knecCode: suRole === 'schoolAdmin' ? suKnecCode.trim() : undefined,
         curriculum: suRole === 'schoolAdmin' ? suCurriculum : undefined,
         startingClass: suRole === 'schoolAdmin' ? suStartingClass : undefined,
@@ -237,9 +259,9 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
               </div>
 
               <div className="form-group">
-                <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Phone Number <span style={{ color: 'rgba(255,255,255,.3)', fontSize: 11, textTransform: 'none', letterSpacing: 0 }}>(optional but links your account)</span></label>
+                <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>Phone Number <span style={{ color: 'rgba(255,255,255,.3)', fontSize: 11, textTransform: 'none', letterSpacing: 0 }}>(Safaricom — used for daily register reminders)</span></label>
                 <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
-                  type="tel" placeholder="0722 123 456" value={suPhone} onChange={e => setSuPhone(e.target.value)} />
+                  type="tel" placeholder="0722 123 456" value={suPhone} onChange={e => setSuPhone(e.target.value)} required />
               </div>
 
               {suRole === 'schoolAdmin' ? (
@@ -277,14 +299,28 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
                     </select>
                   </div>
 
-                  <div className="form-group">
-                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School Type</label>
-                    <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
-                      value={suSchoolType} onChange={e => setSuSchoolType(e.target.value)}>
-                      {['Primary', 'Junior Secondary', 'Secondary', 'Mixed Day', 'Boarding'].map(t => (
-                        <option key={t} value={t} style={{ background: '#1e2730', color: '#fff' }}>{t}</option>
-                      ))}
-                    </select>
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School Type</label>
+                      <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                        value={suBoardingType} onChange={e => setSuBoardingType(e.target.value as BoardingType)}>
+                        {(Object.keys(BOARDING_TYPE_LABELS) as BoardingType[]).map(t => (
+                          <option key={t} value={t} style={{ background: '#1e2730', color: '#fff' }}>{BOARDING_TYPE_LABELS[t]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School Level</label>
+                      <select className="form-select" style={{ background: '#1e2730', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+                        value={suSchoolLevel} onChange={e => setSuSchoolLevel(e.target.value as SchoolLevel)}>
+                        {SCHOOL_LEVELS.map(l => (
+                          <option key={l} value={l} style={{ background: '#1e2730', color: '#fff' }}>{SCHOOL_LEVEL_LABELS[l]}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginTop: -8, marginBottom: 16 }}>
+                    Day schools skip the register on weekends/public holidays automatically; boarding schools mark every day.
                   </div>
 
                   <div className="form-group">
@@ -405,9 +441,17 @@ export default function AuthPage({ defaultTab = 'login' }: { defaultTab?: Tab })
                     )}
                   </div>
                   <div className="form-group">
-                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>School Name</label>
-                    <input className="form-input" style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
-                      type="text" placeholder="Westlands Primary School" value={suSchoolName} onChange={e => setSuSchoolName(e.target.value)} required />
+                    <label className="form-label" style={{ color: 'rgba(255,255,255,.5)' }}>
+                      School Name {suSchoolNameLocked && <span style={{ color: 'var(--mint)', fontSize: 11, textTransform: 'none' }}>✓ confirmed</span>}
+                    </label>
+                    <input className="form-input" style={{ background: suSchoolNameLocked ? 'rgba(0,200,150,.06)' : 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', cursor: suSchoolNameLocked ? 'not-allowed' : 'text' }}
+                      type="text" placeholder="Find your school above to fill this in" value={suSchoolName}
+                      readOnly disabled={suSchoolNameLocked} onChange={() => {}} />
+                    {!suSchoolNameLocked && (
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginTop: 6 }}>
+                        This fills in automatically once your school is found above — it isn't editable, to avoid a mismatch with your admin's records.
+                      </div>
+                    )}
                   </div>
                 </>
               )}

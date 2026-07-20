@@ -28,6 +28,7 @@ body { font-family:'Sora',sans-serif; background:var(--surface); color:var(--tex
 .att-cell.absent  { background:var(--red); color:#fff; }
 .att-cell.late    { background:var(--gold); color:#fff; }
 .att-cell.excused { background:var(--blue); color:#fff; }
+.att-cell.unmarked { background:var(--border); color:var(--text-3); }
 .att-cell:hover { transform:scale(1.15); }
 
 .att-bar-wrap { height:8px; background:var(--border); border-radius:4px; overflow:hidden; }

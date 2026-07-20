@@ -3,6 +3,8 @@ import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import axios from "axios";
 
+export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }
@@ -85,6 +87,16 @@ function sanitizeSmsText(text: string): string {
   return stripped.length > SMS_CONFIG.MAX_LENGTH
     ? stripped.substring(0, SMS_CONFIG.MAX_LENGTH - 3) + "..."
     : stripped;
+}
+
+// Mirrors the LINK_PATTERN in src/types.ts (containsLink/stripLinks) — this is the final,
+// server-side checkpoint before anything actually reaches HostPinnacle, independent of
+// whatever cleaning already happened client-side. Links are never allowed in outbound SMS.
+const LINK_PATTERN = /((https?:\/\/|www\.)\S+)|(\b[a-z0-9-]+\.(com|co\.ke|ke|org|net|info|xyz|link|io|me|ly|app|shop)\b\S*)/gi;
+
+function containsLink(text: string): boolean {
+  LINK_PATTERN.lastIndex = 0;
+  return LINK_PATTERN.test(text);
 }
  
 async function sendHostPinnacleSms(opts: SmsSendOptions): Promise<SmsSendResult> {
@@ -169,6 +181,13 @@ export const sendSms = onCall(
  
     if (!sanitizedMessage) {
       throw new HttpsError("invalid-argument", "Message is empty after sanitisation.");
+    }
+
+    if (containsLink(sanitizedMessage)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Links are not allowed in parent messages. Remove any URLs and try again.",
+      );
     }
  
     const reference = `SMS_${userId}_${Date.now()}`;

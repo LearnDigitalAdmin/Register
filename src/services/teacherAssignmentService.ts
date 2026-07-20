@@ -4,7 +4,7 @@ import {
 import { db } from '../firebase';
 import { School, TeacherAssignment, TeacherTransferRecord, TeacherTransferType, UserProfile } from '../types';
 
-function assignmentId(schoolId: string, teacherUid: string, classCode: string): string {
+export function assignmentId(schoolId: string, teacherUid: string, classCode: string): string {
   return `${schoolId}_${teacherUid}_${classCode}`.replace(/\s+/g, '_');
 }
 
@@ -45,6 +45,15 @@ export async function assignTeacherToClass(params: {
   const { schoolId, teacherUid, teacherName, classCode, assignedBy } = params;
   const id = assignmentId(schoolId, teacherUid, classCode);
   const now = new Date().toISOString();
+
+  // Class-lock: reject up front if a DIFFERENT teacher already actively holds this class.
+  // (Best-effort pre-check — Firestore transactions can't run arbitrary queries, only the
+  // exact-duplicate check below runs inside the transaction itself.)
+  const holders = await getTeachersForClass(schoolId, classCode);
+  const otherHolder = holders.find(a => a.teacherUid !== teacherUid);
+  if (otherHolder) {
+    throw new Error(`${classCode} is already taught by ${otherHolder.teacherName}. Remove or transfer them first.`);
+  }
 
   await runTransaction(db, async (tx) => {
     const ref = doc(db, 'teacherAssignments', id);
@@ -112,7 +121,7 @@ export async function transferTeacher(params: {
   toClasses: string[];
   performedBy: string;
   reason?: string;
-}): Promise<TeacherTransferRecord> {
+}): Promise<TeacherTransferRecord & { swappedTeachers: { teacherUid: string; teacherName: string; intoClass: string }[] }> {
   const { teacherUid, teacherName, type, fromSchoolId, performedBy, reason } = params;
   const toClasses = [...new Set(params.toClasses.map(c => c.trim()).filter(Boolean))];
   if (toClasses.length === 0) throw new Error('At least one destination class is required.');
@@ -120,28 +129,52 @@ export async function transferTeacher(params: {
   const active = await getActiveAssignments(teacherUid);
   const fromClasses = active.map(a => a.classCode);
 
-  // Duplicate-assignment guard at the destination.
+  // Classes this teacher is leaving that aren't ALSO one of their destinations — these become
+  // available as swap slots for anyone displaced below.
+  const vacated = fromClasses.filter(c => !toClasses.includes(c));
+
+  // Find any destination class already actively held by a DIFFERENT teacher.
+  const conflicts: TeacherAssignment[] = [];
   for (const c of toClasses) {
-    const existing = await getTeachersForClass(fromSchoolId, c);
-    if (existing.some(a => a.teacherUid === teacherUid)) {
-      throw new Error(`${teacherName} is already assigned to ${c}.`);
-    }
+    const holders = await getTeachersForClass(fromSchoolId, c);
+    const other = holders.find(a => a.teacherUid !== teacherUid);
+    if (other) conflicts.push(other);
   }
+
+  if (conflicts.length > vacated.length) {
+    const names = conflicts.map(c => `${c.teacherName} (${c.classCode})`).join(', ');
+    throw new Error(
+      `Can't complete this transfer — ${names} would be left without a class. ` +
+      `${teacherName} is only vacating ${vacated.length || 'no'} class(es) to swap them into. ` +
+      `Free up a class first, or transfer them separately.`
+    );
+  }
+
+  // Pair each conflicting occupant with a vacated class, 1:1, so nobody ends up orphaned —
+  // e.g. moving Grade 8A's teacher into 8C automatically moves 8C's teacher into 8A.
+  const swaps = conflicts.map((occupant, i) => ({ occupant, intoClass: vacated[i] }));
 
   const now = new Date().toISOString();
   const logRef = doc(db, 'teacherTransfers', logId());
 
   await runTransaction(db, async (tx) => {
-    // Reads first (Firestore transaction rule): re-fetch the docs we're about to touch.
+    // Reads first (Firestore transaction rule): re-fetch every doc we're about to touch.
     const oldRefs = active.map(a => doc(db, 'teacherAssignments', a.id));
     const oldSnaps = await Promise.all(oldRefs.map(r => tx.get(r)));
     const userRef = doc(db, 'users', teacherUid);
     await tx.get(userRef);
 
+    const swapOldRefs = swaps.map(s => doc(db, 'teacherAssignments', s.occupant.id));
+    const swapOldSnaps = await Promise.all(swapOldRefs.map(r => tx.get(r)));
+    const swapUserRefs = swaps.map(s => doc(db, 'users', s.occupant.teacherUid));
+    const swapUserSnaps = await Promise.all(swapUserRefs.map(r => tx.get(r)));
+
+    // 1. End the transferring teacher's old assignments.
     oldSnaps.forEach((snap, i) => {
       if (snap.exists()) tx.update(oldRefs[i], { active: false, endedAt: now, endedReason: type });
     });
 
+    // 2. Create the transferring teacher's new assignments.
     for (const c of toClasses) {
       const newId = assignmentId(fromSchoolId, teacherUid, c);
       const assignment: TeacherAssignment = {
@@ -150,8 +183,28 @@ export async function transferTeacher(params: {
       };
       tx.set(doc(db, 'teacherAssignments', newId), assignment);
     }
-
     tx.update(userRef, { assignedClasses: toClasses, classCode: toClasses[0], lastActiveClass: toClasses[0] });
+
+    // 3. Swap each displaced occupant into the class the transferring teacher just vacated,
+    //    so no class and no teacher is left orphaned.
+    swaps.forEach((s, i) => {
+      if (swapOldSnaps[i].exists()) {
+        tx.update(swapOldRefs[i], { active: false, endedAt: now, endedReason: type });
+      }
+      const newId = assignmentId(fromSchoolId, s.occupant.teacherUid, s.intoClass);
+      const assignment: TeacherAssignment = {
+        id: newId, schoolId: fromSchoolId, teacherUid: s.occupant.teacherUid, teacherName: s.occupant.teacherName,
+        classCode: s.intoClass, assignedAt: now, assignedBy: performedBy, active: true,
+      };
+      tx.set(doc(db, 'teacherAssignments', newId), assignment);
+
+      const occupantProfile = swapUserSnaps[i].data() as UserProfile | undefined;
+      const remaining = (occupantProfile?.assignedClasses || []).filter(c => c !== s.occupant.classCode);
+      remaining.push(s.intoClass);
+      tx.update(swapUserRefs[i], {
+        assignedClasses: remaining, classCode: remaining[0], lastActiveClass: s.intoClass,
+      });
+    });
 
     const record: TeacherTransferRecord = {
       id: logRef.id, teacherUid, teacherName, type,
@@ -165,6 +218,7 @@ export async function transferTeacher(params: {
     id: logRef.id, teacherUid, teacherName, type,
     fromSchoolId, toSchoolId: fromSchoolId, fromClasses, toClasses,
     performedBy, performedAt: now, ...(reason ? { reason } : {}),
+    swappedTeachers: swaps.map(s => ({ teacherUid: s.occupant.teacherUid, teacherName: s.occupant.teacherName, intoClass: s.intoClass })),
   };
 }
 

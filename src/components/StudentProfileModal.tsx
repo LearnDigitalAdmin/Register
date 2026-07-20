@@ -31,30 +31,54 @@ interface Props {
 // ─── Heatmap ───────────────────────────────────────────────────────────────────
 
 const STATUS_HEATMAP: Record<string, string> = {
-  present: 'var(--mint)',
-  absent:  'var(--red)',
-  late:    'var(--gold)',
-  excused: 'var(--blue)',
-  none:    'var(--border)',
+  present:  'var(--mint)',
+  absent:   'var(--red)',
+  late:     'var(--gold)',
+  excused:  'var(--blue)',
+  unmarked: '#9aa0a6',
+  none:     'var(--border)',
 };
 
+/** Monday on/before `d` (local calendar date, time-of-day ignored). */
+function mondayOnOrBefore(d: Date): Date {
+  const copy = new Date(d);
+  const dow = copy.getDay(); // 0 = Sun .. 6 = Sat
+  copy.setDate(copy.getDate() - (dow === 0 ? 6 : dow - 1));
+  return copy;
+}
+/** Sunday on/after `d`. */
+function sundayOnOrAfter(d: Date): Date {
+  const copy = new Date(d);
+  const dow = copy.getDay();
+  copy.setDate(copy.getDate() + (dow === 0 ? 0 : 7 - dow));
+  return copy;
+}
+
+interface HeatCell { date: string; status: string; padding: boolean }
+
 function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
-  // Build a map date→status for the last 70 days
-  const today = new Date();
-  const days: { date: string; status: string }[] = [];
-  for (let i = 69; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const ymd = d.toISOString().slice(0, 10);
+  // Real calendar grid, Monday-first, covering the last 70 days — padded out to whole weeks
+  // so every column is genuinely the same weekday all the way down (that's the bug this
+  // replaces: the old version just chunked 70 days into rows of 7 without aligning to Monday,
+  // so the "Mon..Sun" row labels didn't actually match the dates in most rows).
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const rangeStart = new Date(today); rangeStart.setDate(rangeStart.getDate() - 69);
+  const gridStart = mondayOnOrBefore(rangeStart);
+  const gridEnd = sundayOnOrAfter(today);
+
+  const cells: HeatCell[] = [];
+  for (const cursor = new Date(gridStart); cursor <= gridEnd; cursor.setDate(cursor.getDate() + 1)) {
+    const ymd = cursor.toISOString().slice(0, 10);
+    const inRange = cursor >= rangeStart && cursor <= today;
+    if (!inRange) { cells.push({ date: ymd, status: '', padding: true }); continue; }
     const rec = history.find(h => h.date === ymd);
-    days.push({ date: ymd, status: rec ? rec.status : 'none' });
+    cells.push({ date: ymd, status: rec ? rec.status : 'none', padding: false });
   }
 
-  // Split into 10 rows of 7
-  const weeks: typeof days[] = [];
-  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+  const weeks: HeatCell[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
-  const LABELS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (
     <div>
@@ -62,7 +86,7 @@ function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
         Last 10 Weeks
       </div>
       <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 4 }}>
-        {/* Day labels column */}
+        {/* Day labels column — di now reliably matches LABELS[di] for every week below. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingTop: 18 }}>
           {LABELS.map(l => (
             <div key={l} style={{ width: 24, height: 18, fontSize: 9, color: 'var(--text-3)', fontWeight: 600, display: 'flex', alignItems: 'center' }}>{l}</div>
@@ -71,22 +95,22 @@ function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
         {/* Weeks */}
         {weeks.map((week, wi) => (
           <div key={wi} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {/* Month label on first day of month */}
+            {/* Month label on the first real (non-padding) day of the month in this column */}
             <div style={{ height: 14, fontSize: 9, color: 'var(--text-3)', textAlign: 'center', whiteSpace: 'nowrap' }}>
-              {week[0] && week[0].date.slice(8) === '01'
-                ? new Date(week[0].date + 'T00:00:00').toLocaleDateString('en-KE', { month: 'short' })
+              {week.find(d => !d.padding && d.date.slice(8) === '01')
+                ? new Date(week.find(d => !d.padding && d.date.slice(8) === '01')!.date + 'T00:00:00').toLocaleDateString('en-KE', { month: 'short' })
                 : ''}
             </div>
             {week.map((day, di) => (
               <div
                 key={di}
-                title={`${day.date}: ${day.status}`}
+                title={day.padding ? undefined : `${day.date}: ${day.status}`}
                 style={{
                   width: 18, height: 18, borderRadius: 4,
-                  background: STATUS_HEATMAP[day.status] || 'var(--border)',
-                  opacity: day.status === 'none' ? 0.25 : 0.85,
+                  background: day.padding ? 'transparent' : (STATUS_HEATMAP[day.status] || 'var(--border)'),
+                  opacity: day.padding ? 0 : (day.status === 'none' ? 0.25 : day.status === 'unmarked' ? 0.5 : 0.85),
                   transition: 'opacity .15s',
-                  cursor: day.status !== 'none' ? 'pointer' : 'default',
+                  cursor: !day.padding && day.status !== 'none' ? 'pointer' : 'default',
                 }}
               />
             ))}
@@ -100,6 +124,7 @@ function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
           { label: 'Absent',  color: 'var(--red)' },
           { label: 'Late',    color: 'var(--gold)' },
           { label: 'Excused', color: 'var(--blue)' },
+          { label: 'Unmarked', color: '#9aa0a6' },
           { label: 'No data', color: 'var(--border)' },
         ].map(l => (
           <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -411,7 +436,8 @@ export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolN
                           <span className={`tag ${
                             h.status === 'present' ? 'tag-mint' :
                             h.status === 'absent'  ? 'tag-red'  :
-                            h.status === 'late'    ? 'tag-gold' : 'tag-blue'
+                            h.status === 'late'    ? 'tag-gold' :
+                            h.status === 'excused' ? 'tag-blue' : 'tag-gray'
                           }`}>
                             {h.status.charAt(0).toUpperCase() + h.status.slice(1)}
                           </span>

@@ -40,3 +40,22 @@ export function formatPhoneDisplay(raw: string): string {
   if (!n) return raw;
   return `${n.slice(0, 4)} ${n.slice(4, 7)} ${n.slice(7)}`;
 }
+
+/**
+ * Safaricom-specific validation, used ONLY for the school admin / teacher admin registration
+ * phone number (needed for the daily register-reminder SMS). Parent phone numbers elsewhere in
+ * the app stay on the broader `normalisePhone`/`isValidPhone` since parents may be on any network.
+ * Accepts 0/254/+254 prefixes, then requires one of Safaricom's published prefixes.
+ */
+const SAFARICOM_PREFIXES = ['070', '071', '072', '074', '075', '076', '079', '011', '014'];
+
+export function normaliseSafaricomPhone(raw: string): string | null {
+  const n = normalisePhone(raw);
+  if (!n || n.length !== 10) return null;
+  const prefix = n.slice(0, 3);
+  return SAFARICOM_PREFIXES.includes(prefix) ? n : null;
+}
+
+export function isSafaricomPhone(raw: string): boolean {
+  return normaliseSafaricomPhone(raw) !== null;
+}

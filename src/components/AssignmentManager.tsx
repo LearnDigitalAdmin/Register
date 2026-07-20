@@ -26,6 +26,7 @@ export default function AssignmentManager({ schoolId, classStructure, currentAdm
   const [removeBusy, setRemoveBusy] = useState(false);
 
   const [transferTarget, setTransferTarget] = useState<UserProfile | null>(null);
+  const [resultMsg, setResultMsg] = useState('');
 
   async function load() {
     setLoading(true);
@@ -40,6 +41,14 @@ export default function AssignmentManager({ schoolId, classStructure, currentAdm
   }
 
   useEffect(() => { load(); }, [schoolId]);
+
+  /** Every class currently actively held by SOME teacher, mapped to who holds it — used to
+   * keep the "+ Add Class" picker from ever offering a class that's already taken. */
+  const classHolders = new Map<string, string>();
+  teachers.forEach(t => {
+    const classes = t.assignedClasses?.length ? t.assignedClasses : (t.classCode ? [t.classCode] : []);
+    classes.forEach(c => classHolders.set(c, t.displayName));
+  });
 
   async function handleAssign(teacher: UserProfile) {
     if (!newClass) return;
@@ -80,6 +89,7 @@ export default function AssignmentManager({ schoolId, classStructure, currentAdm
         </div>
 
         {error && <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>}
+        {resultMsg && <div className="notice notice-info" style={{ marginBottom: 12, fontSize: 12 }}>{resultMsg}</div>}
 
         {loading ? (
           <div style={{ fontSize: 13, color: 'var(--text-2)' }}>Loading…</div>
@@ -122,7 +132,7 @@ export default function AssignmentManager({ schoolId, classStructure, currentAdm
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         <select className="form-input" style={{ padding: '4px 8px', fontSize: 12 }} value={newClass} onChange={e => setNewClass(e.target.value)}>
                           <option value="">— class —</option>
-                          {classStructure?.classes.filter(c => !classes.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+                          {classStructure?.classes.filter(c => !classes.includes(c) && !classHolders.has(c)).map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                         <button className="btn-primary" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => handleAssign(t)}>Add</button>
                         <button className="btn-secondary" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => { setAddingFor(null); setNewClass(''); }}>Cancel</button>
@@ -154,9 +164,10 @@ export default function AssignmentManager({ schoolId, classStructure, currentAdm
             schoolId={schoolId}
             teacher={transferTarget}
             classStructure={classStructure}
+            classHolders={classHolders}
             performedBy={currentAdminUid}
             onClose={() => setTransferTarget(null)}
-            onDone={() => { setTransferTarget(null); load(); }}
+            onDone={(msg) => { setTransferTarget(null); setResultMsg(msg || ''); load(); }}
           />
         )}
       </div>
@@ -165,10 +176,11 @@ export default function AssignmentManager({ schoolId, classStructure, currentAdm
 }
 
 function TeacherTransferDialog({
-  schoolId, teacher, classStructure, performedBy, onClose, onDone,
+  schoolId, teacher, classStructure, classHolders, performedBy, onClose, onDone,
 }: {
   schoolId: string; teacher: UserProfile; classStructure: ClassStructure | null;
-  performedBy: string; onClose: () => void; onDone: () => void;
+  classHolders: Map<string, string>;
+  performedBy: string; onClose: () => void; onDone: (msg?: string) => void;
 }) {
   const [type, setType] = useState<Extract<TeacherTransferType, 'class_transfer' | 'stream_transfer'>>('class_transfer');
   const [toClasses, setToClasses] = useState<string[]>([]);
@@ -176,6 +188,12 @@ function TeacherTransferDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
+
+  const myClasses = teacher.assignedClasses?.length ? teacher.assignedClasses : (teacher.classCode ? [teacher.classCode] : []);
+  // Destinations currently held by someone else — picking one of these will auto-swap that
+  // teacher into whichever class this teacher is vacating.
+  const conflictCount = toClasses.filter(c => classHolders.has(c) && classHolders.get(c) !== teacher.displayName).length;
+  const vacatedCount = myClasses.filter(c => !toClasses.includes(c)).length;
 
   function toggleClass(c: string) {
     setToClasses(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
@@ -185,11 +203,14 @@ function TeacherTransferDialog({
     setBusy(true);
     setError('');
     try {
-      await transferTeacher({
+      const result = await transferTeacher({
         teacherUid: teacher.uid, teacherName: teacher.displayName, type,
         fromSchoolId: schoolId, toClasses, performedBy, reason: reason.trim() || undefined,
       });
-      onDone();
+      const msg = result.swappedTeachers.length
+        ? `Also moved ${result.swappedTeachers.map(s => `${s.teacherName} → ${s.intoClass}`).join(', ')} to avoid an orphaned class.`
+        : undefined;
+      onDone(msg);
     } catch (e: any) {
       setError(e.message || 'Transfer failed.');
       setConfirming(false);
@@ -202,7 +223,12 @@ function TeacherTransferDialog({
     return (
       <ConfirmDialog
         title="Confirm teacher transfer"
-        message={`${teacher.displayName} will be moved to: ${toClasses.join(', ') || '(no classes selected)'}.`}
+        message={
+          `${teacher.displayName} will be moved to: ${toClasses.join(', ') || '(no classes selected)'}.` +
+          (conflictCount > 0
+            ? ` ${conflictCount} of those classes currently have another teacher — they'll be automatically swapped into the class(es) ${teacher.displayName} is vacating so nobody is left without one.`
+            : '')
+        }
         confirmLabel="Transfer"
         busy={busy}
         error={error}
@@ -237,17 +263,29 @@ function TeacherTransferDialog({
           <div className="form-group">
             <label className="form-label">New class(es)</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {(classStructure?.classes || []).map(c => (
-                <button
-                  key={c}
-                  onClick={() => toggleClass(c)}
-                  className={toClasses.includes(c) ? 'btn-primary' : 'btn-secondary'}
-                  style={{ fontSize: 12, padding: '4px 10px' }}
-                >
-                  {c}
-                </button>
-              ))}
+              {(classStructure?.classes || []).map(c => {
+                const holder = classHolders.get(c);
+                const heldByOther = holder && holder !== teacher.displayName;
+                return (
+                  <button
+                    key={c}
+                    onClick={() => toggleClass(c)}
+                    className={toClasses.includes(c) ? 'btn-primary' : 'btn-secondary'}
+                    style={{ fontSize: 12, padding: '4px 10px' }}
+                    title={heldByOther ? `Currently taught by ${holder} — will be swapped` : undefined}
+                  >
+                    {c}{heldByOther ? ` (${holder})` : ''}
+                  </button>
+                );
+              })}
             </div>
+            {conflictCount > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>
+                {conflictCount > vacatedCount
+                  ? `⚠️ ${teacher.displayName} is only vacating ${vacatedCount} class(es) — not enough to swap ${conflictCount} occupied class(es). Free up a class first.`
+                  : `${conflictCount} selected class(es) are occupied — their teacher(s) will be swapped into the class(es) ${teacher.displayName} vacates.`}
+              </div>
+            )}
           </div>
 
           <div className="form-group"><label className="form-label">Reason (optional)</label>
@@ -258,7 +296,7 @@ function TeacherTransferDialog({
           <button
             className="btn-primary"
             style={{ justifyContent: 'center' }}
-            disabled={toClasses.length === 0}
+            disabled={toClasses.length === 0 || conflictCount > vacatedCount}
             onClick={() => setConfirming(true)}
           >
             Review Transfer

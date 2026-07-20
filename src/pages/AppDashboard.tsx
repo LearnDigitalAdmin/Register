@@ -12,9 +12,13 @@ import {
   getSmsTier, KES_RATE_PER_TOKEN,
   TOKEN_PACKAGES, tokensToKes,
   ClassStructure, ImportSummary,
+  RegisterDay,
+  normaliseAdmissionNo, isValidAdmissionNo, generateAdmissionNo,
+  containsLink, stripLinks,
 } from '../types';
 import { getClassStructure } from '../services/academicYearService';
 import { createEnrolment } from '../services/enrolmentService';
+import { isRegisterRequired } from '../utils/kenyanHolidays';
 import {
   SchoolInfo,
   analyseComposedMessage,
@@ -39,7 +43,7 @@ import StudentImportWizard from '../components/StudentImportWizard';
 
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
-const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: 'A', late: 'L', excused: 'E' };
+const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: 'A', late: 'L', excused: 'E', unmarked: '·' };
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
@@ -376,16 +380,25 @@ export default function AppDashboard() {
   const [attendance,      setAttendance]      = useState<Record<string, AttendanceStatus>>({});
   const [notes,           setNotes]           = useState<Record<string, string>>({});
   const [registerLocked,  setRegisterLocked]  = useState(false);
+  const [registerLoading, setRegisterLoading] = useState(false);
+  // Set for day schools on a weekend/holiday — the register isn't required, so the marking
+  // grid is replaced with a notice instead of silently letting everyone default to "present".
+  const [registerNotRequired, setRegisterNotRequired] = useState<{ reason: string } | null>(null);
   const [searchQ,         setSearchQ]         = useState('');
   const [attFilter,       setAttFilter]       = useState<AttendanceStatus | 'all'>('all');
   const [loading,         setLoading]         = useState(true);
   const [showAddStudent,  setShowAddStudent]  = useState(false);
-  const [newStudent,      setNewStudent]      = useState({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
+  const [newStudent,      setNewStudent]      = useState({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
   const [showImportWizard, setShowImportWizard] = useState(false);
 
   const [msgBody,     setMsgBody]     = useState('');
+  const [msgLinkWarning, setMsgLinkWarning] = useState(false);
   const [msgType,     setMsgType]     = useState('notice');
   const [msgTo,       setMsgTo]       = useState('All School');
+  // 'class' = the existing "Send To" chips (a class or the whole school). 'students' = an
+  // explicit pick-list of individual students, e.g. from a per-row "SMS" button.
+  const [msgRecipientMode, setMsgRecipientMode] = useState<'class' | 'students'>('class');
+  const [msgSelectedIds,   setMsgSelectedIds]   = useState<string[]>([]);
   const [sendingMsg,  setSendingMsg]  = useState(false);
 
   const [msgLogs,     setMsgLogs]     = useState<Message[]>([]);
@@ -395,6 +408,11 @@ export default function AppDashboard() {
 
   // ── Report modals ──────────────────────────────────────────────────────────
   const [showTermly,        setShowTermly]        = useState(false);
+  // Genuinely school-wide present/absent for TODAY, for the Reports "School-wide Snapshot"
+  // card. This can't be derived from local `attendance` state — that only ever holds the
+  // currently active class's marks — so it's summed straight from every class's saved
+  // register for today instead (this is the "reports need to fit the overview" fix).
+  const [schoolTodayStats, setSchoolTodayStats] = useState<{ present: number; absent: number } | null>(null);
   const [showWeekly,        setShowWeekly]        = useState(false);
   const [showStudentProfile,setShowStudentProfile]= useState(false);
   const [transferDialog, setTransferDialog] = useState<{ mode: 'in' | 'out' | 'internal'; student?: Student } | null>(null);
@@ -460,6 +478,7 @@ export default function AppDashboard() {
         name:  d?.name  || userProfile?.schoolName || '',
         phone: d?.phone || d?.adminPhone || userProfile?.phone || '',
         county: d?.county,
+        boardingType: d?.boardingType,
       };
       setSchoolInfo(info);
       setSettingsPhone(info.phone);
@@ -476,20 +495,99 @@ export default function AppDashboard() {
 
   useEffect(() => { if (userProfile) loadStudents(); }, [userProfile]);
   useEffect(() => { if (panel === 'logs' && schoolId) loadLogs(); }, [panel, schoolId]);
+  useEffect(() => {
+    if (panel !== 'reports' || !schoolId) return;
+    (async () => {
+      try {
+        const q = query(collection(db, 'registers'), where('schoolId', '==', schoolId), where('date', '==', todayStr()));
+        const snap = await getDocs(q);
+        let present = 0, absent = 0;
+        snap.docs.forEach(d => {
+          const r = d.data() as RegisterDay;
+          present += r.present || 0;
+          absent += r.absent || 0;
+        });
+        setSchoolTodayStats({ present, absent });
+      } catch (e) { console.error(e); setSchoolTodayStats(null); }
+    })();
+  }, [panel, schoolId]);
+  // Re-derive today's register whenever the active class changes or the roster finishes
+  // loading — each class has its own register, so switching class must never show
+  // yesterday's (or another class's) marks/lock-state.
+  useEffect(() => { if (schoolId && activeClassCode) loadTodayRegister(); }, [schoolId, activeClassCode, students.length, schoolInfo?.boardingType]);
 
   async function loadStudents() {
     if (!schoolId) return;
     setLoading(true);
     try {
+      // Read is school-wide (not class-scoped) — see firestore.rules comment on `students` —
+      // both so this query is even allowed to run for a class-restricted teacher, and so
+      // admission-number uniqueness (below, in addStudent) can be checked school-wide. What a
+      // teacher can actually DO with a student outside their class stays fully locked down;
+      // `scopedStudents` (declared above) is what every panel actually renders from.
       const q    = query(collection(db, 'students'), where('schoolId', '==', schoolId));
       const snap = await getDocs(q);
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)).filter(s => !s.archived);
       setStudents(list);
-      const init: Record<string, AttendanceStatus> = {};
-      list.forEach(s => { init[s.id] = 'present'; });
-      setAttendance(init);
     } catch (e) { console.error(e); }
     setLoading(false);
+  }
+
+  /**
+   * Loads (or initialises) TODAY's register for the active class — this is what fixes two
+   * things at once: (1) every student starts as `unmarked`, never silently assumed `present`,
+   * and (2) refreshing the page or switching class no longer wipes out marks a teacher already
+   * saved, since we now actually read back what's in Firestore instead of only ever writing.
+   */
+  async function loadTodayRegister() {
+    if (activeClassCode === 'All School') {
+      // Admins browsing the whole school aren't marking a register — nothing to load.
+      setAttendance({}); setNotes({}); setRegisterLocked(false); setRegisterNotRequired(null);
+      return;
+    }
+    const today = todayStr();
+    const classRoster = students.filter(s => s.classCode === activeClassCode);
+
+    const availability = isRegisterRequired(today, schoolInfo?.boardingType);
+    if (!availability.required) {
+      setRegisterNotRequired({ reason: availability.reason || 'Not required today' });
+      setAttendance({}); setNotes({}); setRegisterLocked(false);
+      return;
+    }
+    setRegisterNotRequired(null);
+
+    setRegisterLoading(true);
+    try {
+      const regId = `${schoolId}_${activeClassCode}_${today}`.replace(/\s/g, '_');
+      const [regSnap, attSnap] = await Promise.all([
+        getDoc(doc(db, 'registers', regId)),
+        getDocs(query(
+          collection(db, 'attendance'),
+          where('schoolId', '==', schoolId), where('classCode', '==', activeClassCode), where('date', '==', today),
+        )),
+      ]);
+
+      const init: Record<string, AttendanceStatus> = {};
+      const initNotes: Record<string, string> = {};
+      classRoster.forEach(s => { init[s.id] = 'unmarked'; });
+      attSnap.docs.forEach(d => {
+        const rec = d.data() as { studentId: string; status: AttendanceStatus; note?: string };
+        if (rec.studentId in init) { init[rec.studentId] = rec.status; initNotes[rec.studentId] = rec.note || ''; }
+      });
+
+      setAttendance(init);
+      setNotes(initNotes);
+      setRegisterLocked(regSnap.exists() ? !!(regSnap.data() as RegisterDay).locked : false);
+    } catch (e) {
+      console.error(e);
+      // Fall back to an unmarked, unlocked register rather than silently defaulting to present.
+      const init: Record<string, AttendanceStatus> = {};
+      classRoster.forEach(s => { init[s.id] = 'unmarked'; });
+      setAttendance(init);
+      setRegisterLocked(false);
+    } finally {
+      setRegisterLoading(false);
+    }
   }
 
   async function loadLogs() {
@@ -505,18 +603,32 @@ export default function AppDashboard() {
   function toggleStatus(id: string) {
     if (registerLocked) return;
     setAttendance(prev => {
-      const cur  = prev[id] || 'present';
-      const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(cur) + 1) % STATUS_CYCLE.length];
+      const cur  = prev[id] || 'unmarked';
+      const cycleFrom = STATUS_CYCLE.includes(cur) ? STATUS_CYCLE.indexOf(cur) : -1;
+      const next = STATUS_CYCLE[(cycleFrom + 1) % STATUS_CYCLE.length];
       return { ...prev, [id]: next };
     });
   }
 
-  const counts = { present: 0, absent: 0, late: 0, excused: 0 };
-  Object.values(attendance).forEach(s => counts[s]++);
-  const rate = students.length ? Math.round((counts.present / students.length) * 100) : 0;
+  function markAll(status: AttendanceStatus) {
+    if (registerLocked) return;
+    setAttendance(prev => {
+      const next = { ...prev };
+      scopedStudents.forEach(s => { next[s.id] = status; });
+      return next;
+    });
+  }
+
+  // Scoped to the class actually being registered — this is the fix for the headline bug:
+  // "Present Today" (and every other register stat) used to be computed across the WHOLE
+  // school's attendance map regardless of which class was active.
+  const counts = { present: 0, absent: 0, late: 0, excused: 0, unmarked: 0 };
+  scopedStudents.forEach(s => { const st = attendance[s.id] || 'unmarked'; counts[st]++; });
+  const rate = scopedStudents.length ? Math.round((counts.present / scopedStudents.length) * 100) : 0;
 
   async function saveRegister() {
     if (!userProfile || !schoolInfo) return;
+    if (registerNotRequired) { toast(`ℹ️ No register needed today — ${registerNotRequired.reason}.`); return; }
     try {
       const today = todayStr();
       const regId = `${schoolId}_${classCode}_${today}`.replace(/\s/g, '_');
@@ -525,15 +637,15 @@ export default function AppDashboard() {
         date: today, classCode, schoolId,
         savedBy: userProfile.displayName, savedAt: new Date().toISOString(),
         locked: true, present: counts.present, absent: counts.absent,
-        late: counts.late, excused: counts.excused, total: students.length,
+        late: counts.late, excused: counts.excused, unmarked: counts.unmarked, total: scopedStudents.length,
         ...(activeAcademicYearId ? { academicYearId: activeAcademicYearId } : {}),
       });
 
-      for (const s of students) {
+      for (const s of scopedStudents) {
         await setDoc(doc(db, 'attendance', `${regId}_${s.id}`), {
           studentId: s.id, studentName: s.name, admissionNo: s.admissionNo,
           date: today, classCode, schoolId,
-          status: attendance[s.id] || 'present',
+          status: attendance[s.id] || 'unmarked',
           note: notes[s.id] || '',
           savedBy: userProfile.displayName,
           savedAt: new Date().toISOString(), locked: true,
@@ -544,8 +656,8 @@ export default function AppDashboard() {
 
       setRegisterLocked(true);
 
-      const toNotify = students.filter(s => {
-        const st = attendance[s.id] || 'present';
+      const toNotify = scopedStudents.filter(s => {
+        const st = attendance[s.id] || 'unmarked';
         return (st === 'absent' || st === 'late') && s.parentPhone?.trim();
       });
 
@@ -557,7 +669,7 @@ export default function AppDashboard() {
       toast(`📱 Register saved. Sending ${toNotify.length} parent notification${toNotify.length !== 1 ? 's' : ''}…`);
 
       const result = await sendRegisterNotifications({
-        students, attendance,
+        students: scopedStudents, attendance,
         sender: {
           uid: user!.uid, displayName: userProfile.displayName,
           phone: userProfile.phone, schoolId, schoolName: schoolInfo.name,
@@ -584,8 +696,27 @@ export default function AppDashboard() {
   async function addStudent() {
     if (!newStudent.name.trim() || !schoolId) return;
     try {
-      const seq         = (students.length + 1).toString().padStart(4, '0');
-      const admissionNo = `${schoolId.slice(-4)}-${classCode.replace(/\s/g, '')}-${seq}`;
+      let admissionNo: string;
+      if (newStudent.admissionNo.trim()) {
+        if (!isValidAdmissionNo(newStudent.admissionNo)) {
+          toast('❌ Admission number can only contain letters, numbers, "/" and "-".');
+          return;
+        }
+        admissionNo = normaliseAdmissionNo(newStudent.admissionNo);
+        // Admission numbers must be unique school-wide, not just within this class —
+        // `students` is the full school roster (see loadStudents), so this check is reliable.
+        if (students.some(s => normaliseAdmissionNo(s.admissionNo) === admissionNo)) {
+          toast(`❌ Admission number ${admissionNo} is already in use at this school.`);
+          return;
+        }
+      } else {
+        admissionNo = generateAdmissionNo(schoolId, classCode, students.length);
+        // Extremely unlikely, but guard against the fallback colliding with a manually-entered one.
+        while (students.some(s => normaliseAdmissionNo(s.admissionNo) === admissionNo)) {
+          admissionNo = generateAdmissionNo(schoolId, classCode, students.length);
+        }
+      }
+
       const s = {
         name: newStudent.name.trim(), admissionNo, classCode, schoolId,
         parentName: newStudent.parentName.trim(),
@@ -604,32 +735,46 @@ export default function AppDashboard() {
         } catch (e) { console.error('Enrolment creation failed:', e); }
       }
       setStudents(prev => [...prev, { id: ref.id, ...s, ...(currentEnrolmentId ? { currentEnrolmentId } : {}) }]);
-      setAttendance(prev => ({ ...prev, [ref.id]: 'present' }));
+      setAttendance(prev => ({ ...prev, [ref.id]: 'unmarked' }));
       setShowAddStudent(false);
-      setNewStudent({ name: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
-      toast('✅ Student added!');
+      setNewStudent({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '' });
+      toast(`✅ Student added! Admission No. ${admissionNo}`);
     } catch (e: any) { toast('❌ ' + e.message); }
   }
 
+  // What "Send" will actually message — the actual bug fix for issue #8/broadcast scoping:
+  // the old code always sent to the ENTIRE school regardless of the "Send To" chip chosen.
+  const messageRecipients = msgRecipientMode === 'students'
+    ? students.filter(s => msgSelectedIds.includes(s.id))
+    : (msgTo === 'All School' ? students : students.filter(s => s.classCode === msgTo));
+
   async function sendBroadcastMessage() {
     if (!userProfile || !schoolInfo || !msgBody.trim()) return;
+    if (messageRecipients.length === 0) { toast('⚠️ Pick at least one recipient first.'); return; }
     setSendingMsg(true);
     try {
       const result = await sendBroadcast({
-        bodyText: msgBody, recipients: students,
+        bodyText: msgBody, recipients: messageRecipients,
         sender: {
           uid: user!.uid, displayName: userProfile.displayName,
           phone: userProfile.phone, schoolId, schoolName: schoolInfo.name,
           messageTokens: tokens,
         },
-        school: schoolInfo, type: msgType, recipientsLabel: msgTo,
+        school: schoolInfo, type: msgType,
+        recipientsLabel: msgRecipientMode === 'students'
+          ? `${messageRecipients.length} selected student${messageRecipients.length !== 1 ? 's' : ''}`
+          : msgTo,
       });
       await refreshProfile();
       if (result.error) {
         toast(`⚠️ ${result.error}`);
       } else {
-        toast(`✅ Sent to ${result.sent} parents. ${result.tokensUsed} tokens used.`);
+        toast(`✅ Sent to ${result.sent} parents. ${result.tokensUsed} tokens used.` +
+          (result.linksRemoved ? ' Links aren\u2019t allowed in parent messages and were removed.' : ''));
         setMsgBody('');
+        setMsgLinkWarning(false);
+        setMsgRecipientMode('class');
+        setMsgSelectedIds([]);
       }
     } catch (e: any) { toast('❌ ' + e.message); }
     finally { setSendingMsg(false); }
@@ -637,8 +782,11 @@ export default function AppDashboard() {
 
   function handleResend(msg: Message) {
     setMsgBody(extractBody(msg.rawContent || msg.content));
+    setMsgLinkWarning(false);
     setMsgType(msg.type);
     setMsgTo(msg.recipients);
+    setMsgRecipientMode('class');
+    setMsgSelectedIds([]);
     setPanel('messages');
     toast('📋 Message loaded for resend.');
   }
@@ -826,7 +974,7 @@ export default function AppDashboard() {
                       <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                         <div style={{ fontSize: 13, color: 'var(--text-2)', width: 70 }}>{r.label}</div>
                         <div className="att-bar-wrap" style={{ flex: 1 }}>
-                          <div className="att-bar-fill" style={{ width: `${students.length ? (r.count/students.length)*100 : 0}%`, background: r.color }} />
+                          <div className="att-bar-fill" style={{ width: `${scopedStudents.length ? (r.count/scopedStudents.length)*100 : 0}%`, background: r.color }} />
                         </div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: r.color, width: 24, textAlign: 'right' }}>{r.count}</div>
                       </div>
@@ -868,18 +1016,20 @@ export default function AppDashboard() {
                 <div className="page-title">Today's Register</div>
                 <div className="page-sub">
                   {classCode} · {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}
-                  {registerLocked ? ' · 🔒 Saved & Locked' : ''}
+                  {registerLoading ? ' · loading…' : registerLocked ? ' · 🔒 Saved & Locked' : ''}
                 </div>
               </div>
               <div className="page-actions">
                 <div className="search-bar"><input type="text" placeholder="Search student..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
-                {!registerLocked
-                  ? <button className="btn-primary" onClick={saveRegister}>💾 Save &amp; Notify Parents</button>
-                  : <button className="btn-secondary" onClick={() => toast('📥 PDF export coming soon!')}>📥 Export PDF</button>}
+                {registerNotRequired
+                  ? null
+                  : !registerLocked
+                    ? <button className="btn-primary" onClick={saveRegister}>💾 Save &amp; Notify Parents</button>
+                    : <button className="btn-secondary" onClick={() => toast('📥 PDF export coming soon!')}>📥 Export PDF</button>}
               </div>
             </div>
             <div className="page-body">
-              {!registerLocked && (counts.absent > 0 || counts.late > 0) && (
+              {!registerNotRequired && !registerLocked && (counts.absent > 0 || counts.late > 0) && (
                 <div className="notice notice-info">
                   📲 <strong>Auto-notify on save:</strong>{' '}
                   {counts.absent > 0 && <span>{counts.absent} absent</span>}
@@ -893,13 +1043,19 @@ export default function AppDashboard() {
                   )}
                 </div>
               )}
-              {registerLocked && (
+              {!registerNotRequired && registerLocked && (
                 <div className="notice notice-locked">🔒 Register saved and locked. Attendance SMS sent automatically.</div>
               )}
-              {students.length === 0 && (
-                <div className="notice notice-info">No students yet. <span style={{ color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPanel('students')}>Add students →</span></div>
+              {registerNotRequired && (
+                <div className="notice notice-info">
+                  📅 No register needed for {classCode} today — {registerNotRequired.reason}.
+                </div>
+              )}
+              {!registerNotRequired && scopedStudents.length === 0 && (
+                <div className="notice notice-info">No students yet in {classCode}. <span style={{ color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }} onClick={() => setPanel('students')}>Add students →</span></div>
               )}
 
+              {!registerNotRequired && (
               <div className="card">
                 <div className="card-header">
                   <div className="reg-summary">
@@ -907,9 +1063,10 @@ export default function AppDashboard() {
                     <div className="reg-sum-item" style={{ color: 'var(--red)' }}>✗ <span>{counts.absent}</span> Absent</div>
                     <div className="reg-sum-item" style={{ color: 'var(--gold)' }}>L <span>{counts.late}</span> Late</div>
                     <div className="reg-sum-item" style={{ color: 'var(--blue)' }}>E <span>{counts.excused}</span> Excused</div>
+                    <div className="reg-sum-item" style={{ color: 'var(--text-3)' }}>· <span>{counts.unmarked}</span> Unmarked</div>
                   </div>
                   <div className="tab-bar">
-                    {(['all','present','absent','late','excused'] as const).map(f => (
+                    {(['all','present','absent','late','excused','unmarked'] as const).map(f => (
                       <button key={f} className={`tab-btn${attFilter === f ? ' active' : ''}`} onClick={() => setAttFilter(f)}>
                         {f.charAt(0).toUpperCase() + f.slice(1)}
                       </button>
@@ -926,8 +1083,8 @@ export default function AppDashboard() {
                           <td className="td-name">{s.name}</td>
                           <td className="td-mono">{s.admissionNo}</td>
                           <td>
-                            <div className={`att-cell ${attendance[s.id] || 'present'}`} onClick={() => toggleStatus(s.id)}>
-                              {STATUS_LABEL[attendance[s.id] || 'present']}
+                            <div className={`att-cell ${attendance[s.id] || 'unmarked'}`} onClick={() => toggleStatus(s.id)}>
+                              {STATUS_LABEL[attendance[s.id] || 'unmarked']}
                             </div>
                           </td>
                           <td>
@@ -946,15 +1103,16 @@ export default function AppDashboard() {
                 <div className="card-footer" style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                   {!registerLocked && (
                     <>
-                      <button className="btn-xs btn-xs-mint" onClick={() => { const a: Record<string, AttendanceStatus> = {}; students.forEach(s => a[s.id] = 'present'); setAttendance(a); }}>Mark All Present</button>
-                      <button className="btn-xs btn-xs-gray" onClick={() => { const a: Record<string, AttendanceStatus> = {}; students.forEach(s => a[s.id] = 'absent'); setAttendance(a); }}>Mark All Absent</button>
+                      <button className="btn-xs btn-xs-mint" onClick={() => markAll('present')}>Mark All Present</button>
+                      <button className="btn-xs btn-xs-gray" onClick={() => markAll('absent')}>Mark All Absent</button>
                     </>
                   )}
-                  <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 'auto' }}>Click to cycle: P → A → L → E → P</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 'auto' }}>Click to cycle: Unmarked → P → A → L → E</span>
                 </div>
               </div>
+              )}
 
-              {!registerLocked && schoolInfo && (counts.absent > 0 || counts.late > 0) && (
+              {!registerNotRequired && !registerLocked && schoolInfo && (counts.absent > 0 || counts.late > 0) && (
                 <div className="card">
                   <div className="card-header">
                     <span className="card-title">📱 SMS Preview</span>
@@ -962,7 +1120,7 @@ export default function AppDashboard() {
                   </div>
                   <div className="card-body" style={{ display: 'grid', gridTemplateColumns: counts.absent > 0 && counts.late > 0 ? '1fr 1fr' : '1fr', gap: 16 }}>
                     {(['absent', 'late'] as const).map(st => {
-                      const sample = students.find(s => (attendance[s.id] || 'present') === st);
+                      const sample = scopedStudents.find(s => (attendance[s.id] || 'unmarked') === st);
                       if (!sample) return null;
                       const msg = buildAttendanceSms(st, sample, schoolInfo, classCode, userProfile.displayName, userProfile.phone || schoolInfo.phone, todayLabel);
                       const countFor = st === 'absent' ? counts.absent : counts.late;
@@ -1024,6 +1182,7 @@ export default function AppDashboard() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                       {[
                         { label: 'Student Name *',        key: 'name',        type: 'text', placeholder: 'Full name' },
+                        { label: 'Admission No.',          key: 'admissionNo', type: 'text', placeholder: 'Leave blank to auto-generate' },
                         { label: 'Parent / Guardian Name', key: 'parentName',  type: 'text', placeholder: 'Parent name' },
                         { label: 'Parent Phone (SMS)',     key: 'parentPhone', type: 'tel',  placeholder: '0722 123 456' },
                       ].map(f => (
@@ -1054,10 +1213,13 @@ export default function AppDashboard() {
                           <td className="td-mono">{s.admissionNo}</td>
                           <td>{s.parentName || '—'}</td>
                           <td className="td-mono">{s.parentPhone || '—'}</td>
-                          <td><div className={`att-cell ${attendance[s.id] || 'present'}`} style={{ cursor: 'default' }}>{STATUS_LABEL[attendance[s.id] || 'present']}</div></td>
+                          <td><div className={`att-cell ${attendance[s.id] || 'unmarked'}`} style={{ cursor: 'default' }}>{STATUS_LABEL[attendance[s.id] || 'unmarked']}</div></td>
                           <td className="td-actions">
                             <button className="btn-xs btn-xs-mint" onClick={() => {
                               setMsgBody(`${s.name} was noted today. Please contact the school.`);
+                              setMsgLinkWarning(false);
+                              setMsgRecipientMode('students');
+                              setMsgSelectedIds([s.id]);
                               setPanel('messages');
                               toast('Message pre-filled for ' + s.name);
                             }}>SMS</button>
@@ -1128,18 +1290,51 @@ export default function AppDashboard() {
                     </div>
                     <div className="form-group">
                       <label className="form-label">Send To</label>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {[...new Set(['All School', classCode, ...(isAdmin ? (classStructure?.classes || []) : [])])].map(c => (
-                          <div key={c} className={`chip${msgTo === c ? ' active' : ''}`} onClick={() => setMsgTo(c)}>{c}</div>
-                        ))}
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                        <div className={`chip${msgRecipientMode === 'class' ? ' active' : ''}`} onClick={() => setMsgRecipientMode('class')}>By Class</div>
+                        <div className={`chip${msgRecipientMode === 'students' ? ' active' : ''}`} onClick={() => setMsgRecipientMode('students')}>Select Students</div>
                       </div>
+                      {msgRecipientMode === 'class' ? (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          {[...new Set(['All School', classCode, ...(isAdmin ? (classStructure?.classes || []) : [])])].map(c => (
+                            <div key={c} className={`chip${msgTo === c ? ' active' : ''}`} onClick={() => setMsgTo(c)}>{c}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 220, overflowY: 'auto' }}>
+                          {scopedStudents.length === 0 && (
+                            <div style={{ padding: 12, fontSize: 12, color: 'var(--text-3)' }}>No students in {classCode}.</div>
+                          )}
+                          {scopedStudents.map(s => (
+                            <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 13, cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={msgSelectedIds.includes(s.id)}
+                                onChange={() => setMsgSelectedIds(prev => prev.includes(s.id) ? prev.filter(id => id !== s.id) : [...prev, s.id])}
+                              />
+                              {s.name} <span style={{ color: 'var(--text-3)', fontSize: 11 }}>({s.admissionNo})</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     {schoolInfo ? (
-                      <SmsComposeBox
-                        body={msgBody} onBodyChange={setMsgBody}
-                        school={schoolInfo} recipientCount={students.length}
-                        tokens={tokens} sending={sendingMsg} onSend={sendBroadcastMessage}
-                      />
+                      <>
+                        {msgLinkWarning && (
+                          <div className="notice notice-warning">
+                            ⚠️ Links aren't allowed in parent messages and were removed — sending links (even shortened ones) is disabled completely for this feature.
+                          </div>
+                        )}
+                        <SmsComposeBox
+                          body={msgBody}
+                          onBodyChange={(v) => {
+                            if (containsLink(v)) setMsgLinkWarning(true);
+                            setMsgBody(stripLinks(v));
+                          }}
+                          school={schoolInfo} recipientCount={messageRecipients.length}
+                          tokens={tokens} sending={sendingMsg} onSend={sendBroadcastMessage}
+                        />
+                      </>
                     ) : (
                       <div style={{ color: 'var(--text-3)', fontSize: 13 }}>Loading school info…</div>
                     )}
@@ -1318,9 +1513,10 @@ export default function AppDashboard() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
                     {[
                       { label: 'Total Students', value: String(students.length), color: 'var(--ink)' },
-                      { label: 'Present Today', value: String(counts.present), color: 'var(--mint-d)' },
-                      { label: 'Absent Today',  value: String(counts.absent),  color: 'var(--red)' },
-                      { label: 'Today\'s Rate', value: `${rate}%`,             color: rate >= 90 ? 'var(--mint-d)' : rate >= 75 ? '#c4800a' : 'var(--red)' },
+                      { label: 'Present Today', value: String(schoolTodayStats?.present ?? 0), color: 'var(--mint-d)' },
+                      { label: 'Absent Today',  value: String(schoolTodayStats?.absent ?? 0),  color: 'var(--red)' },
+                      { label: 'Today\'s Rate', value: `${students.length && schoolTodayStats ? Math.round((schoolTodayStats.present / students.length) * 100) : 0}%`,
+                        color: 'var(--mint-d)' },
                     ].map(s => (
                       <div key={s.label} style={{ textAlign: 'center', padding: '12px 8px', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
                         <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
@@ -1573,7 +1769,7 @@ export default function AppDashboard() {
         onClose={() => setShowStudentProfile(false)}
         schoolId={schoolId}
         schoolName={userProfile.schoolName}
-        students={students}
+        students={scopedStudents}
         academicYearId={activeAcademicYearId}
       />
 
