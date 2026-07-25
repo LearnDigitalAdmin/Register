@@ -220,6 +220,7 @@ export interface Student {
   parentWhatsApp: string;
   createdAt: string;
   nationalId?: string;
+  upiNumber?: string;         // Kenyan NEMIS/Unique Pupil Identifier, if the school tracks it
   currentEnrolmentId?: string;  // set once Phase 2 (promotion engine) is wired in
   archived?: boolean;           // true once graduated into the global archivedStudents collection
 }
@@ -421,31 +422,51 @@ export type ImportFieldKey =
   | 'admissionNo'
   | 'name'
   | 'classCode'
+  | 'streamCode'
   | 'parentName'
   | 'parentPhone'
   | 'parentWhatsApp'
-  | 'nationalId';
+  | 'nationalId'
+  | 'upiNumber';
 
-/** Which import fields are mandatory vs optional. */
+/** Which import fields are mandatory vs optional (before scope is taken into account —
+ * see `requiredFieldsMapped`, which is scope-aware). */
 export const IMPORT_REQUIRED_FIELDS: ImportFieldKey[] = ['admissionNo', 'name', 'classCode'];
-export const IMPORT_OPTIONAL_FIELDS: ImportFieldKey[] = ['parentName', 'parentPhone', 'parentWhatsApp', 'nationalId'];
+export const IMPORT_OPTIONAL_FIELDS: ImportFieldKey[] = ['streamCode', 'parentName', 'parentPhone', 'parentWhatsApp', 'nationalId', 'upiNumber'];
 
 export const IMPORT_FIELD_LABELS: Record<ImportFieldKey, string> = {
   admissionNo:    'Admission No.',
   name:           'Student Name',
-  classCode:      'Class',
+  classCode:      'Class (and stream, if combined)',
+  streamCode:     'Stream (only if in a separate column)',
   parentName:     'Parent / Guardian Name',
   parentPhone:    'Parent Phone (SMS)',
   parentWhatsApp: 'Parent WhatsApp',
   nationalId:     'National ID / Birth Cert No.',
+  upiNumber:      'UPI / NEMIS No.',
 };
+
+/**
+ * Whole-school imports read the class (and optionally stream) from the file and resolve them
+ * against the school's class structure for every row. Single-class imports force every row into
+ * one admin/teacher-chosen class and ignore any class/stream column entirely — this is the
+ * default, safer mode, since it can't accidentally scatter students across the wrong classes.
+ */
+export type ImportScope = 'singleClass' | 'wholeSchool';
 
 /** A saved column-mapping preset for a school, so the next import remembers it. */
 export interface ImportColumnMapping {
   id: string;                 // = schoolId, doc id
   schoolId: string;
-  /** spreadsheet column header -> canonical field key */
+  /** spreadsheet column header -> canonical field key (remembers last import's exact mapping) */
   mapping: Partial<Record<ImportFieldKey, string>>;
+  /**
+   * School-taught aliases: header text phrases (not tied to any one file) that this school has
+   * told us mean a given field — e.g. a teacher whose files always call admission numbers
+   * "admin nos" adds it here once, and every future import auto-detects it, even in a
+   * differently-named file. Distinct from `mapping`, which only remembers one exact column name.
+   */
+  customFieldAliases?: Partial<Record<ImportFieldKey, string[]>>;
   updatedAt: string;
 }
 
@@ -469,6 +490,10 @@ export interface ImportRowIssue {
 export interface ImportRow {
   rowIndex: number;            // 1-based row number in the source file (excluding header)
   values: Partial<Record<ImportFieldKey, string>>;
+  /** The canonical class code this row will actually be written with, once resolved —
+   * either the extraction engine's result (wholeSchool scope) or the forced target class
+   * (singleClass scope). Never derived from `values.classCode` directly at import time. */
+  resolvedClassCode?: string;
   issues: ImportRowIssue[];
   /** True once the row has no blocking issues and is ready to import. */
   isValid: boolean;
@@ -483,4 +508,42 @@ export interface ImportSummary {
   missingAdmissionNo: number;
   failed: number;
 }
+
+// ── Duplicate/sibling/ghost-student conflict detection ─────────────────────
+// Written by the scanSchoolForConflicts and onStudentWrittenCheckConflicts Cloud Functions
+// (see functions/src/conflicts.ts and functions/src/dedupe.ts) into the `conflicts` collection.
+
+export type ConflictType = 'duplicate_admission' | 'duplicate_student' | 'phone_conflict';
+export type ConflictStatus = 'open' | 'dismissed' | 'resolved';
+
+/** Denormalised snapshot of one side of a flagged pair — enough to render the conflicts panel
+ * without extra reads. May go stale if the student record changes after the conflict was
+ * flagged; a rescan refreshes it. */
+export interface ConflictStudentSnapshot {
+  id: string;
+  name: string;
+  admissionNo: string;
+  classCode: string;
+  parentName: string;
+  parentPhone: string;
+}
+
+export interface Conflict {
+  id: string;
+  schoolId: string;
+  type: ConflictType;
+  studentIds: string[];
+  students: ConflictStudentSnapshot[];
+  reason: string;
+  status: ConflictStatus;
+  createdAt: string;
+  updatedAt: string;
+  resolutionNote?: string;
+}
+
+export const CONFLICT_TYPE_LABELS: Record<ConflictType, string> = {
+  duplicate_admission: 'Duplicate admission no.',
+  duplicate_student:   'Likely duplicate student',
+  phone_conflict:       'Shared phone, different family',
+};
 

@@ -4,6 +4,7 @@ import * as admin from "firebase-admin";
 import axios from "axios";
 
 export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
+export { scanSchoolForConflicts, onStudentWrittenCheckConflicts } from "./conflicts";
 
 if (!admin.apps.length) {
   admin.initializeApp();

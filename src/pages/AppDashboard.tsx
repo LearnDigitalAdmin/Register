@@ -17,6 +17,7 @@ import {
   containsLink, stripLinks,
 } from '../types';
 import { getClassStructure } from '../services/academicYearService';
+import { normalisePhone } from '../utils/phoneValidation';
 import { createEnrolment } from '../services/enrolmentService';
 import { isRegisterRequired } from '../utils/kenyanHolidays';
 import {
@@ -40,6 +41,8 @@ import ChangeSchoolDialog from '../components/ChangeSchoolDialog';
 import ContactUs, { ContactButton } from '../components/ContactUs';
 import AcademicYearPanel from '../components/AcademicYearPanel';
 import StudentImportWizard from '../components/StudentImportWizard';
+import ConflictsPanel from '../components/ConflictsPanel';
+import { getConflicts } from '../services/conflictsService';
 
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
@@ -400,6 +403,8 @@ export default function AppDashboard() {
   // ever be added to exactly one real class, never to "All School" or to more than one class.
   const [newStudent,      setNewStudent]      = useState({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '', classCode: '' });
   const [showImportWizard, setShowImportWizard] = useState(false);
+  const [showConflictsPanel, setShowConflictsPanel] = useState(false);
+  const [openConflictCount, setOpenConflictCount] = useState(0);
   // True whenever the Register panel is being viewed with no specific class selected (admins
   // default to "All School", which is a whole-school overview, not a class). A register is
   // always tied to exactly one class — there is no such thing as a whole-school register — so
@@ -512,6 +517,12 @@ export default function AppDashboard() {
 
   useEffect(() => { if (userProfile) loadStudents(); }, [userProfile]);
   useEffect(() => { if (panel === 'logs' && schoolId) loadLogs(); }, [panel, schoolId]);
+  useEffect(() => {
+    if (!schoolId || !isAdmin || showConflictsPanel) return;
+    getConflicts(schoolId)
+      .then(list => setOpenConflictCount(list.filter(c => c.status === 'open').length))
+      .catch(() => {}); // badge count is best-effort; panel itself surfaces real errors
+  }, [schoolId, isAdmin, showConflictsPanel]);
   useEffect(() => {
     if (panel !== 'reports' || !schoolId) return;
     (async () => {
@@ -777,8 +788,8 @@ export default function AppDashboard() {
       const s = {
         name: newStudent.name.trim(), admissionNo, classCode: targetClassCode, schoolId,
         parentName: newStudent.parentName.trim(),
-        parentPhone: newStudent.parentPhone.trim(),
-        parentWhatsApp: newStudent.parentPhone.trim(),
+        parentPhone: normalisePhone(newStudent.parentPhone) || newStudent.parentPhone.trim(),
+        parentWhatsApp: normalisePhone(newStudent.parentPhone) || newStudent.parentPhone.trim(),
         createdAt: new Date().toISOString(),
       };
       const ref = await addDoc(collection(db, 'students'), s);
@@ -1245,6 +1256,11 @@ export default function AppDashboard() {
                 <div className="search-bar"><input type="text" placeholder="Search..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
                 <button className="btn-secondary" onClick={() => setTransferDialog({ mode: 'in' })}>↘ Transfer In</button>
                 <button className="btn-secondary" onClick={() => setShowImportWizard(true)}>⬆ Import</button>
+                {isAdmin && (
+                  <button className="btn-secondary" onClick={() => setShowConflictsPanel(true)}>
+                    ⚠ Conflicts{openConflictCount > 0 ? ` (${openConflictCount})` : ''}
+                  </button>
+                )}
                 <button className="btn-primary" onClick={() => {
                   // Pre-fill the form's class field with whatever real class is currently active,
                   // as a convenience — but never with "All School": if that's the active tab (an
@@ -1266,12 +1282,17 @@ export default function AppDashboard() {
                   classStructure={classStructure}
                   activeAcademicYearId={activeAcademicYearId || null}
                   existingStudents={students}
+                  availableClasses={isAdmin ? (classStructure?.classes || []) : myAssignedClasses}
+                  canImportWholeSchool={isAdmin}
                   onClose={() => setShowImportWizard(false)}
                   onImported={(summary: ImportSummary) => {
                     if (summary.imported > 0) loadStudents();
                     toast(`✅ ${summary.imported} Imported · ${summary.skipped} Skipped · ${summary.duplicate} Duplicate · ${summary.missingAdmissionNo} Missing Admission No.`);
                   }}
                 />
+              )}
+              {showConflictsPanel && (
+                <ConflictsPanel schoolId={schoolId} onClose={() => setShowConflictsPanel(false)} />
               )}
               {showAddStudent && (
                 <div className="card" style={{ marginBottom: 24, border: '2px solid var(--mint)' }}>
@@ -1907,6 +1928,7 @@ export default function AppDashboard() {
         schoolName={userProfile.schoolName}
         students={scopedStudents}
         academicYearId={activeAcademicYearId}
+        allowedClassCodes={isAdmin ? undefined : myAssignedClasses}
       />
 
       {transferDialog && (

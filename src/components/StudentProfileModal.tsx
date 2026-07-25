@@ -26,6 +26,10 @@ interface Props {
   schoolName:  string;
   students:    Student[];   // already loaded in AppDashboard
   academicYearId?: string;
+  /** A class-restricted teacher's assigned classes — pass this so the attendance-history query
+   * can be scoped to classes they actually have access to (see reportsService.generateStudentProfile).
+   * Omit for an admin/whole-school viewer. */
+  allowedClassCodes?: string[];
 }
 
 // ─── Heatmap ───────────────────────────────────────────────────────────────────
@@ -139,7 +143,7 @@ function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
 
 // ─── Main modal ────────────────────────────────────────────────────────────────
 
-export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolName, students, academicYearId }: Props) {
+export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolName, students, academicYearId, allowedClassCodes }: Props) {
   const [search,   setSearch]   = useState('');
   const [selected, setSelected] = useState<Student | null>(null);
   const [profile,  setProfile]  = useState<StudentProfile | null>(null);
@@ -158,7 +162,7 @@ export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolN
   const loadProfile = useCallback(async (student: Student) => {
     setLoading(true); setError('');
     try {
-      const p = await generateStudentProfile(student.id, schoolId, schoolName, 180, academicYearId);
+      const p = await generateStudentProfile(student.id, schoolId, schoolName, 180, academicYearId, allowedClassCodes);
       if (p) {
         // Fill in parent details from local students list
         p.parentName  = student.parentName  || '';
@@ -174,7 +178,7 @@ export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolN
     } finally {
       setLoading(false);
     }
-  }, [schoolId, schoolName]);
+  }, [schoolId, schoolName, allowedClassCodes]);
 
   function handleSelect(student: Student) {
     setSelected(student);

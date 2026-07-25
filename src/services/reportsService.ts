@@ -334,12 +334,14 @@ export async function generateTermlyReport(
     getDocs(query(
       collection(db, 'attendance'),
       where('schoolId', '==', schoolId),
+      ...(classCodeFilter ? [where('classCode', '==', classCodeFilter)] : []),
       where('date', '>=', startDate),
       where('date', '<=', endDate),
     )),
     getDocs(query(
       collection(db, 'registers'),
       where('schoolId', '==', schoolId),
+      ...(classCodeFilter ? [where('classCode', '==', classCodeFilter)] : []),
       where('date', '>=', startDate),
       where('date', '<=', endDate),
     )),
@@ -507,6 +509,7 @@ export async function generateWeeklySummary(
     getDocs(query(
       collection(db, 'registers'),
       where('schoolId', '==', schoolId),
+      ...(classCodeFilter ? [where('classCode', '==', classCodeFilter)] : []),
       where('date', '>=', start),
       where('date', '<=', end),
     )),
@@ -597,6 +600,11 @@ export async function generateWeeklySummary(
 /**
  * Fetches complete attendance history for a single student.
  * @param academicYearId  See generateTermlyReport — same year-scoping rationale.
+ * @param allowedClassCodes  Pass a class-restricted teacher's assigned classes to scope the
+ *   query to just those classes — required for the read to be provable under firestore.rules'
+ *   per-class access check (a teacher can't read attendance under a classCode they don't have
+ *   access to, even historical records from a student's prior class). Omit entirely for an
+ *   admin/whole-school viewer, whose access isn't classCode-scoped at all.
  */
 export async function generateStudentProfile(
   studentId:   string,
@@ -604,12 +612,19 @@ export async function generateStudentProfile(
   schoolName:  string,
   limitDays:   number = 180,
   academicYearId?: string,
+  allowedClassCodes?: string[],
 ): Promise<StudentProfile | null> {
   // Pull attendance records for this student
   const attQ = query(
     collection(db, 'attendance'),
     where('studentId', '==', studentId),
     where('schoolId', '==', schoolId),
+    // Firestore 'in' supports up to 30 values — comfortably more than any real teacher's
+    // assigned-class list — and, combined with the composite index on
+    // (studentId, schoolId, classCode, date), makes this query provable under the
+    // classCode-scoped `hasClassAccess` rule instead of being rejected outright.
+    ...(allowedClassCodes && allowedClassCodes.length > 0
+      ? [where('classCode', 'in', allowedClassCodes.slice(0, 30))] : []),
     orderBy('date', 'desc'),
     limit(limitDays),
   );

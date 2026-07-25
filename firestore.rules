@@ -101,6 +101,25 @@ service cloud.firestore {
                        hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
       allow delete: if false; // enrolments are closed out (status change), never deleted
     }
+    // Dedup/sibling/ghost-student conflicts, flagged by the scanSchoolForConflicts and
+    // onStudentWrittenCheckConflicts Cloud Functions (see functions/src/conflicts.ts). Only
+    // ever created by those functions via the admin SDK (which bypasses these rules) — clients
+    // can read their own school's conflicts and resolve/dismiss them, but can't fabricate or
+    // edit the underlying facts of a conflict, and can't delete one (audit trail stays intact;
+    // resolve or dismiss instead — same philosophy as never deleting a student record above).
+    match /conflicts/{id} {
+      allow read: if resource != null && isSchoolAdminOf(resource.data.schoolId);
+      allow create: if false;
+      allow update: if isSchoolAdminOf(resource.data.schoolId) &&
+                       request.resource.data.schoolId    == resource.data.schoolId &&
+                       request.resource.data.type        == resource.data.type &&
+                       request.resource.data.studentIds  == resource.data.studentIds &&
+                       request.resource.data.students    == resource.data.students &&
+                       request.resource.data.reason      == resource.data.reason &&
+                       request.resource.data.createdAt   == resource.data.createdAt &&
+                       request.resource.data.status in ['open', 'dismissed', 'resolved'];
+      allow delete: if false;
+    }
     match /attendance/{id} {
       allow read:   if hasClassAccess(resource.data.schoolId, resource.data.classCode);
       allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);

@@ -1,0 +1,1102 @@
+diff --git a/firestore.indexes.json b/firestore.indexes.json
+index 315bee5..e239da4 100644
+--- a/firestore.indexes.json
++++ b/firestore.indexes.json
+@@ -17,6 +17,16 @@
+         { "fieldPath": "date", "order": "DESCENDING" }
+       ]
+     },
++    {
++      "collectionGroup": "attendance",
++      "queryScope": "COLLECTION",
++      "fields": [
++        { "fieldPath": "studentId", "order": "ASCENDING" },
++        { "fieldPath": "schoolId", "order": "ASCENDING" },
++        { "fieldPath": "classCode", "order": "ASCENDING" },
++        { "fieldPath": "date", "order": "DESCENDING" }
++      ]
++    },
+     {
+       "collectionGroup": "attendance",
+       "queryScope": "COLLECTION",
+@@ -108,6 +118,14 @@
+         { "fieldPath": "schoolId", "order": "ASCENDING" },
+         { "fieldPath": "nationalId", "order": "ASCENDING" }
+       ]
++    },
++    {
++      "collectionGroup": "conflicts",
++      "queryScope": "COLLECTION",
++      "fields": [
++        { "fieldPath": "schoolId", "order": "ASCENDING" },
++        { "fieldPath": "createdAt", "order": "DESCENDING" }
++      ]
+     }
+   ],
+   "fieldOverrides": []
+diff --git a/firestore.rules b/firestore.rules
+index df1a2d4..bb96175 100644
+--- a/firestore.rules
++++ b/firestore.rules
+@@ -101,6 +101,25 @@ service cloud.firestore {
+                        hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+       allow delete: if false; // enrolments are closed out (status change), never deleted
+     }
++    // Dedup/sibling/ghost-student conflicts, flagged by the scanSchoolForConflicts and
++    // onStudentWrittenCheckConflicts Cloud Functions (see functions/src/conflicts.ts). Only
++    // ever created by those functions via the admin SDK (which bypasses these rules) — clients
++    // can read their own school's conflicts and resolve/dismiss them, but can't fabricate or
++    // edit the underlying facts of a conflict, and can't delete one (audit trail stays intact;
++    // resolve or dismiss instead — same philosophy as never deleting a student record above).
++    match /conflicts/{id} {
++      allow read: if resource != null && isSchoolAdminOf(resource.data.schoolId);
++      allow create: if false;
++      allow update: if isSchoolAdminOf(resource.data.schoolId) &&
++                       request.resource.data.schoolId    == resource.data.schoolId &&
++                       request.resource.data.type        == resource.data.type &&
++                       request.resource.data.studentIds  == resource.data.studentIds &&
++                       request.resource.data.students    == resource.data.students &&
++                       request.resource.data.reason      == resource.data.reason &&
++                       request.resource.data.createdAt   == resource.data.createdAt &&
++                       request.resource.data.status in ['open', 'dismissed', 'resolved'];
++      allow delete: if false;
++    }
+     match /attendance/{id} {
+       allow read:   if hasClassAccess(resource.data.schoolId, resource.data.classCode);
+       allow create: if hasClassAccess(request.resource.data.schoolId, request.resource.data.classCode);
+diff --git a/functions/src/index.ts b/functions/src/index.ts
+index 16656cc..c2d0000 100644
+--- a/functions/src/index.ts
++++ b/functions/src/index.ts
+@@ -4,6 +4,7 @@ import * as admin from "firebase-admin";
+ import axios from "axios";
+ 
+ export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
++export { scanSchoolForConflicts, onStudentWrittenCheckConflicts } from "./conflicts";
+ 
+ if (!admin.apps.length) {
+   admin.initializeApp();
+diff --git a/src/components/StudentImportWizard.tsx b/src/components/StudentImportWizard.tsx
+index 311fa2c..f281b95 100644
+--- a/src/components/StudentImportWizard.tsx
++++ b/src/components/StudentImportWizard.tsx
+@@ -1,20 +1,27 @@
+ import { useMemo, useRef, useState } from 'react';
+ import {
+-  ClassStructure, Student, ImportFieldKey, ImportRow,
++  ClassStructure, Student, ImportFieldKey, ImportRow, ImportScope,
+   IMPORT_REQUIRED_FIELDS, IMPORT_OPTIONAL_FIELDS, IMPORT_FIELD_LABELS, ImportSummary,
+ } from '../types';
+ import {
+   parseImportFile, ParsedSheet, autoDetectMapping, getSavedMapping, saveMapping,
+   resetSavedMapping, buildRows, validateRows, executeImport, requiredFieldsMapped,
++  addCustomAlias, removeCustomAlias,
+ } from '../services/importService';
+ 
+-type Step = 1 | 2 | 3;
++type Step = 0 | 1 | 2 | 3;
+ 
+ interface Props {
+   schoolId: string;
+   classStructure: ClassStructure | null;
+   activeAcademicYearId: string | null;
+   existingStudents: Student[];
++  /** Classes this user may import into. Admins get the full school list (and can therefore
++   * also choose "whole school"); teachers only get their own assigned classes. */
++  availableClasses: string[];
++  /** Whole-school imports (extracting class/stream from the file) are only offered to admins —
++   * a class-restricted teacher can only ever import into one of their own classes. */
++  canImportWholeSchool: boolean;
+   onClose: () => void;
+   /** Called once the import finishes, with a summary the caller can toast, and a signal to refresh the roster. */
+   onImported: (summary: ImportSummary) => void;
+@@ -23,13 +30,19 @@ interface Props {
+ const ALL_FIELDS: ImportFieldKey[] = [...IMPORT_REQUIRED_FIELDS, ...IMPORT_OPTIONAL_FIELDS];
+ 
+ export default function StudentImportWizard({
+-  schoolId, classStructure, activeAcademicYearId, existingStudents, onClose, onImported,
++  schoolId, classStructure, activeAcademicYearId, existingStudents,
++  availableClasses, canImportWholeSchool, onClose, onImported,
+ }: Props) {
+-  const [step, setStep] = useState<Step>(1);
++  const [step, setStep] = useState<Step>(0);
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState('');
+   const fileInputRef = useRef<HTMLInputElement>(null);
+ 
++  // Step 0 — scope: which class(es) this import may touch.
++  // Single-class is the safe default: it can never scatter students into the wrong class.
++  const [scope, setScope] = useState<ImportScope>('singleClass');
++  const [targetClassCode, setTargetClassCode] = useState<string>(availableClasses[0] || '');
++
+   // Step 1
+   const [parsed, setParsed] = useState<ParsedSheet | null>(null);
+   const [dragOver, setDragOver] = useState(false);
+@@ -37,6 +50,12 @@ export default function StudentImportWizard({
+   // Step 2
+   const [mapping, setMapping] = useState<Partial<Record<ImportFieldKey, string>>>({});
+   const [hadSavedMapping, setHadSavedMapping] = useState(false);
++  // School's persisted field-alias library (e.g. "admin nos" -> admissionNo), separate from
++  // the one-shot "last exact column mapping" cache. Loaded once the file is parsed.
++  const [customAliases, setCustomAliases] = useState<Partial<Record<ImportFieldKey, string[]>>>({});
++  const [showFieldLibrary, setShowFieldLibrary] = useState(false);
++  const [newAliasField, setNewAliasField] = useState<ImportFieldKey>('admissionNo');
++  const [newAliasText, setNewAliasText] = useState('');
+ 
+   // Step 3
+   const [rows, setRows] = useState<ImportRow[]>([]);
+@@ -52,7 +71,9 @@ export default function StudentImportWizard({
+       setParsed(result);
+ 
+       const saved = await getSavedMapping(schoolId).catch(() => null);
+-      const auto = autoDetectMapping(result.columns);
++      const aliases = saved?.customFieldAliases || {};
++      setCustomAliases(aliases);
++      const auto = autoDetectMapping(result.columns, aliases);
+       if (saved && Object.keys(saved.mapping).length > 0) {
+         // Prefer the saved mapping, but only for columns that still exist in this file.
+         const merged: Partial<Record<ImportFieldKey, string>> = {};
+@@ -84,7 +105,7 @@ export default function StudentImportWizard({
+ 
+   function resetMappingToAuto() {
+     if (!parsed) return;
+-    setMapping(autoDetectMapping(parsed.columns));
++    setMapping(autoDetectMapping(parsed.columns, customAliases));
+     setHadSavedMapping(false);
+   }
+ 
+@@ -100,10 +121,58 @@ export default function StudentImportWizard({
+     }
+   }
+ 
++  /** Teaches the school's field library the column header currently mapped to `field`, so a
++   * future file with a different exact header but the same wording still auto-detects. */
++  async function teachAliasFromMapping(field: ImportFieldKey) {
++    const col = mapping[field];
++    if (!col) return;
++    setBusy(true);
++    try {
++      const next = await addCustomAlias(schoolId, field, col);
++      setCustomAliases(next);
++    } catch (e) {
++      setError(e instanceof Error ? e.message : 'Failed to save this label to the field library.');
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  /** Adds a manually-typed phrase (not necessarily a column in this file) to the field library —
++   * covers the "this school always calls it X" case even before a file using that spelling shows up. */
++  async function addManualAlias() {
++    if (!newAliasText.trim()) return;
++    setBusy(true);
++    try {
++      const next = await addCustomAlias(schoolId, newAliasField, newAliasText);
++      setCustomAliases(next);
++      setNewAliasText('');
++    } catch (e) {
++      setError(e instanceof Error ? e.message : 'Failed to save this alias.');
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  async function deleteAlias(field: ImportFieldKey, alias: string) {
++    setBusy(true);
++    try {
++      const next = await removeCustomAlias(schoolId, field, alias);
++      setCustomAliases(next);
++    } catch (e) {
++      setError(e instanceof Error ? e.message : 'Failed to remove this alias.');
++    } finally {
++      setBusy(false);
++    }
++  }
++
+   async function goToPreview() {
+     if (!parsed) return;
+     setError('');
+-    if (!requiredFieldsMapped(mapping)) {
++    if (scope === 'singleClass' && !targetClassCode) {
++      setError('Please choose which class this import is for.');
++      return;
++    }
++    if (!requiredFieldsMapped(mapping, scope)) {
+       setError('Please map all required fields before continuing.');
+       return;
+     }
+@@ -112,7 +181,7 @@ export default function StudentImportWizard({
+       await saveMapping(schoolId, mapping).catch(() => {}); // best-effort; not blocking
+       const built = buildRows(parsed, mapping);
+       const validated = validateRows(built, {
+-        classStructure, existingStudents, activeAcademicYearId,
++        classStructure, existingStudents, activeAcademicYearId, scope, targetClassCode,
+       });
+       setRows(validated);
+       setStep(3);
+@@ -123,7 +192,7 @@ export default function StudentImportWizard({
+ 
+   function revalidate(next: ImportRow[]) {
+     return validateRows(next.map(r => ({ ...r, issues: [], isValid: true })), {
+-      classStructure, existingStudents, activeAcademicYearId,
++      classStructure, existingStudents, activeAcademicYearId, scope, targetClassCode,
+     });
+   }
+ 
+@@ -176,8 +245,8 @@ export default function StudentImportWizard({
+ 
+         {/* Step indicator */}
+         <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+-          {(['Upload', 'Map Columns', 'Preview & Import'] as const).map((label, i) => {
+-            const n = (i + 1) as Step;
++          {(['Scope', 'Upload', 'Map Columns', 'Preview & Import'] as const).map((label, i) => {
++            const n = i as Step;
+             const active = step === n;
+             const done = step > n;
+             return (
+@@ -188,7 +257,7 @@ export default function StudentImportWizard({
+                 color: active ? 'var(--blue)' : done ? 'var(--mint-d)' : 'var(--text-3)',
+                 border: `1px solid ${active ? 'rgba(44,111,173,.3)' : done ? 'rgba(0,200,150,.25)' : 'var(--border)'}`,
+               }}>
+-                {done ? '✓ ' : `${n}. `}{label}
++                {done ? '✓ ' : `${n + 1}. `}{label}
+               </div>
+             );
+           })}
+@@ -196,6 +265,74 @@ export default function StudentImportWizard({
+ 
+         {error && <div className="notice notice-locked">⚠️ {error}</div>}
+ 
++        {/* ── STEP 0: Scope ── */}
++        {step === 0 && (
++          <div>
++            <div className="notice notice-info">
++              Choose what this import is allowed to touch. <strong>Single class</strong> is the
++              safer default — every row lands in the one class you pick below, and any class or
++              stream column in the file is ignored completely.
++            </div>
++            <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
++              <label style={{
++                flex: 1, padding: 16, borderRadius: 10, cursor: 'pointer',
++                border: `2px solid ${scope === 'singleClass' ? 'var(--blue)' : 'var(--border)'}`,
++                background: scope === 'singleClass' ? 'rgba(44,111,173,.06)' : 'var(--surface-2)',
++              }}>
++                <input
++                  type="radio" name="importScope" style={{ marginRight: 8 }}
++                  checked={scope === 'singleClass'}
++                  onChange={() => setScope('singleClass')}
++                />
++                <strong>Single class</strong>
++                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
++                  Import into one class you choose now. Recommended for a normal class roster upload.
++                </div>
++              </label>
++              <label style={{
++                flex: 1, padding: 16, borderRadius: 10,
++                cursor: canImportWholeSchool ? 'pointer' : 'not-allowed',
++                opacity: canImportWholeSchool ? 1 : 0.5,
++                border: `2px solid ${scope === 'wholeSchool' ? 'var(--blue)' : 'var(--border)'}`,
++                background: scope === 'wholeSchool' ? 'rgba(44,111,173,.06)' : 'var(--surface-2)',
++              }}>
++                <input
++                  type="radio" name="importScope" style={{ marginRight: 8 }}
++                  checked={scope === 'wholeSchool'} disabled={!canImportWholeSchool}
++                  onChange={() => setScope('wholeSchool')}
++                />
++                <strong>Whole school</strong>
++                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>
++                  {canImportWholeSchool
++                    ? 'Reads class/stream from the file and places each student automatically. Requires clear class data in the file.'
++                    : 'Only a school admin can run a whole-school import.'}
++                </div>
++              </label>
++            </div>
++            {scope === 'singleClass' && (
++              <div className="form-group" style={{ marginTop: 16 }}>
++                <label className="form-label">Import into class *</label>
++                <select
++                  className="form-input" value={targetClassCode}
++                  onChange={e => setTargetClassCode(e.target.value)}
++                >
++                  <option value="">— choose a class —</option>
++                  {availableClasses.map(c => <option key={c} value={c}>{c}</option>)}
++                </select>
++              </div>
++            )}
++            <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
++              <button
++                className="btn-primary"
++                disabled={scope === 'singleClass' && !targetClassCode}
++                onClick={() => setStep(1)}
++              >
++                Continue →
++              </button>
++            </div>
++          </div>
++        )}
++
+         {/* ── STEP 1: Upload ── */}
+         {step === 1 && (
+           <div>
+@@ -225,6 +362,9 @@ export default function StudentImportWizard({
+                 Loaded <strong>{parsed.fileName}</strong> — worksheet "{parsed.sheetName}", {parsed.rowCount} rows, {parsed.columns.length} columns detected.
+               </div>
+             )}
++            <div style={{ marginTop: 20 }}>
++              <button className="btn-secondary" disabled={busy} onClick={() => setStep(0)}>Back</button>
++            </div>
+           </div>
+         )}
+ 
+@@ -234,27 +374,80 @@ export default function StudentImportWizard({
+             <div className="notice notice-info">
+               Detected worksheet "<strong>{parsed.sheetName}</strong>" · {parsed.rowCount} rows · {parsed.columns.length} columns.
+               {hadSavedMapping && ' Using your saved mapping from a previous import.'}
++              {scope === 'singleClass' && ` Importing into "${targetClassCode}" — any class/stream column is ignored.`}
+             </div>
+             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+-              {ALL_FIELDS.map(field => {
++              {ALL_FIELDS
++                .filter(field => !(scope === 'singleClass' && (field === 'classCode' || field === 'streamCode')))
++                .map(field => {
+                 const required = IMPORT_REQUIRED_FIELDS.includes(field);
+                 return (
+                   <div className="form-group" key={field} style={{ margin: 0 }}>
+                     <label className="form-label">
+                       {IMPORT_FIELD_LABELS[field]} {required && <span style={{ color: 'var(--red)' }}>*</span>}
+                     </label>
+-                    <select
+-                      className="form-input"
+-                      value={mapping[field] || ''}
+-                      onChange={e => setMapping(prev => ({ ...prev, [field]: e.target.value || undefined }))}
+-                    >
+-                      <option value="">— not mapped —</option>
+-                      {parsed.columns.map(col => <option key={col} value={col}>{col}</option>)}
+-                    </select>
++                    <div style={{ display: 'flex', gap: 6 }}>
++                      <select
++                        className="form-input"
++                        value={mapping[field] || ''}
++                        onChange={e => setMapping(prev => ({ ...prev, [field]: e.target.value || undefined }))}
++                      >
++                        <option value="">— not mapped —</option>
++                        {parsed.columns.map(col => <option key={col} value={col}>{col}</option>)}
++                      </select>
++                      {mapping[field] && (
++                        <button
++                          type="button" className="btn-xs btn-xs-gray" disabled={busy}
++                          title={`Remember "${mapping[field]}" as a label for ${IMPORT_FIELD_LABELS[field]} in future imports`}
++                          onClick={() => teachAliasFromMapping(field)}
++                        >
++                          + Remember
++                        </button>
++                      )}
++                    </div>
+                   </div>
+                 );
+               })}
+             </div>
++
++            <div style={{ marginTop: 16 }}>
++              <button className="btn-secondary" onClick={() => setShowFieldLibrary(v => !v)}>
++                {showFieldLibrary ? '▾' : '▸'} Field library {Object.values(customAliases).some(a => a && a.length > 0) ? `(${Object.values(customAliases).reduce((n, a) => n + (a?.length || 0), 0)} saved)` : ''}
++              </button>
++              {showFieldLibrary && (
++                <div style={{ marginTop: 10, padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-2)' }}>
++                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10 }}>
++                    Labels this school has taught the importer, in addition to the built-in library.
++                    They apply automatically to every future import, even in a differently-named file.
++                  </div>
++                  {ALL_FIELDS.map(field => {
++                    const aliases = customAliases[field] || [];
++                    if (aliases.length === 0) return null;
++                    return (
++                      <div key={field} style={{ marginBottom: 8 }}>
++                        <strong style={{ fontSize: 12 }}>{IMPORT_FIELD_LABELS[field]}:</strong>{' '}
++                        {aliases.map(a => (
++                          <span key={a} className="btn-xs btn-xs-gray" style={{ marginRight: 6, marginBottom: 4, display: 'inline-block' }}>
++                            {a} <button type="button" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--red)' }} onClick={() => deleteAlias(field, a)}>✕</button>
++                          </span>
++                        ))}
++                      </div>
++                    );
++                  })}
++                  <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
++                    <select className="form-input" style={{ maxWidth: 220 }} value={newAliasField} onChange={e => setNewAliasField(e.target.value as ImportFieldKey)}>
++                      {ALL_FIELDS.map(f => <option key={f} value={f}>{IMPORT_FIELD_LABELS[f]}</option>)}
++                    </select>
++                    <input
++                      className="form-input" placeholder='e.g. "admin nos"' value={newAliasText}
++                      onChange={e => setNewAliasText(e.target.value)}
++                      onKeyDown={e => { if (e.key === 'Enter') addManualAlias(); }}
++                    />
++                    <button className="btn-secondary" disabled={busy || !newAliasText.trim()} onClick={addManualAlias}>+ Add</button>
++                  </div>
++                </div>
++              )}
++            </div>
+             <div style={{ marginTop: 20, display: 'flex', gap: 12, justifyContent: 'space-between' }}>
+               <div style={{ display: 'flex', gap: 12 }}>
+                 <button className="btn-secondary" onClick={resetMappingToAuto}>↺ Reset to auto-detect</button>
+@@ -285,6 +478,7 @@ export default function StudentImportWizard({
+                     <thead>
+                       <tr>
+                         <th>#</th>
++                        <th>Class</th>
+                         {ALL_FIELDS.filter(f => mapping[f]).map(f => <th key={f}>{IMPORT_FIELD_LABELS[f]}</th>)}
+                         <th>Issues</th>
+                         <th>Skip</th>
+@@ -294,6 +488,9 @@ export default function StudentImportWizard({
+                       {rows.map(row => (
+                         <tr key={row.rowIndex} style={{ opacity: row.excluded ? 0.45 : 1, background: !row.isValid && !row.excluded ? 'rgba(232,69,69,.05)' : undefined }}>
+                           <td style={{ color: 'var(--text-3)' }}>{row.rowIndex}</td>
++                          <td style={{ fontSize: 12, fontWeight: row.resolvedClassCode ? 700 : 400, color: row.resolvedClassCode ? 'var(--ink)' : 'var(--red)' }}>
++                            {row.resolvedClassCode || '—'}
++                          </td>
+                           {ALL_FIELDS.filter(f => mapping[f]).map(field => {
+                             const fieldIssue = row.issues.find(i => i.field === field);
+                             return (
+diff --git a/src/components/StudentProfileModal.tsx b/src/components/StudentProfileModal.tsx
+index c9bcfa0..339b46e 100644
+--- a/src/components/StudentProfileModal.tsx
++++ b/src/components/StudentProfileModal.tsx
+@@ -26,6 +26,10 @@ interface Props {
+   schoolName:  string;
+   students:    Student[];   // already loaded in AppDashboard
+   academicYearId?: string;
++  /** A class-restricted teacher's assigned classes — pass this so the attendance-history query
++   * can be scoped to classes they actually have access to (see reportsService.generateStudentProfile).
++   * Omit for an admin/whole-school viewer. */
++  allowedClassCodes?: string[];
+ }
+ 
+ // ─── Heatmap ───────────────────────────────────────────────────────────────────
+@@ -139,7 +143,7 @@ function AttendanceHeatmap({ history }: { history: StudentAttendanceDay[] }) {
+ 
+ // ─── Main modal ────────────────────────────────────────────────────────────────
+ 
+-export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolName, students, academicYearId }: Props) {
++export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolName, students, academicYearId, allowedClassCodes }: Props) {
+   const [search,   setSearch]   = useState('');
+   const [selected, setSelected] = useState<Student | null>(null);
+   const [profile,  setProfile]  = useState<StudentProfile | null>(null);
+@@ -158,7 +162,7 @@ export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolN
+   const loadProfile = useCallback(async (student: Student) => {
+     setLoading(true); setError('');
+     try {
+-      const p = await generateStudentProfile(student.id, schoolId, schoolName, 180, academicYearId);
++      const p = await generateStudentProfile(student.id, schoolId, schoolName, 180, academicYearId, allowedClassCodes);
+       if (p) {
+         // Fill in parent details from local students list
+         p.parentName  = student.parentName  || '';
+@@ -174,7 +178,7 @@ export default function StudentProfileModal({ isOpen, onClose, schoolId, schoolN
+     } finally {
+       setLoading(false);
+     }
+-  }, [schoolId, schoolName]);
++  }, [schoolId, schoolName, allowedClassCodes]);
+ 
+   function handleSelect(student: Student) {
+     setSelected(student);
+diff --git a/src/pages/AppDashboard.tsx b/src/pages/AppDashboard.tsx
+index 500c134..431d390 100644
+--- a/src/pages/AppDashboard.tsx
++++ b/src/pages/AppDashboard.tsx
+@@ -17,6 +17,7 @@ import {
+   containsLink, stripLinks,
+ } from '../types';
+ import { getClassStructure } from '../services/academicYearService';
++import { normalisePhone } from '../utils/phoneValidation';
+ import { createEnrolment } from '../services/enrolmentService';
+ import { isRegisterRequired } from '../utils/kenyanHolidays';
+ import {
+@@ -40,6 +41,8 @@ import ChangeSchoolDialog from '../components/ChangeSchoolDialog';
+ import ContactUs, { ContactButton } from '../components/ContactUs';
+ import AcademicYearPanel from '../components/AcademicYearPanel';
+ import StudentImportWizard from '../components/StudentImportWizard';
++import ConflictsPanel from '../components/ConflictsPanel';
++import { getConflicts } from '../services/conflictsService';
+ 
+ 
+ const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
+@@ -400,6 +403,8 @@ export default function AppDashboard() {
+   // ever be added to exactly one real class, never to "All School" or to more than one class.
+   const [newStudent,      setNewStudent]      = useState({ name: '', admissionNo: '', parentName: '', parentPhone: '', parentWhatsApp: '', classCode: '' });
+   const [showImportWizard, setShowImportWizard] = useState(false);
++  const [showConflictsPanel, setShowConflictsPanel] = useState(false);
++  const [openConflictCount, setOpenConflictCount] = useState(0);
+   // True whenever the Register panel is being viewed with no specific class selected (admins
+   // default to "All School", which is a whole-school overview, not a class). A register is
+   // always tied to exactly one class — there is no such thing as a whole-school register — so
+@@ -512,6 +517,12 @@ export default function AppDashboard() {
+ 
+   useEffect(() => { if (userProfile) loadStudents(); }, [userProfile]);
+   useEffect(() => { if (panel === 'logs' && schoolId) loadLogs(); }, [panel, schoolId]);
++  useEffect(() => {
++    if (!schoolId || !isAdmin || showConflictsPanel) return;
++    getConflicts(schoolId)
++      .then(list => setOpenConflictCount(list.filter(c => c.status === 'open').length))
++      .catch(() => {}); // badge count is best-effort; panel itself surfaces real errors
++  }, [schoolId, isAdmin, showConflictsPanel]);
+   useEffect(() => {
+     if (panel !== 'reports' || !schoolId) return;
+     (async () => {
+@@ -777,8 +788,8 @@ export default function AppDashboard() {
+       const s = {
+         name: newStudent.name.trim(), admissionNo, classCode: targetClassCode, schoolId,
+         parentName: newStudent.parentName.trim(),
+-        parentPhone: newStudent.parentPhone.trim(),
+-        parentWhatsApp: newStudent.parentPhone.trim(),
++        parentPhone: normalisePhone(newStudent.parentPhone) || newStudent.parentPhone.trim(),
++        parentWhatsApp: normalisePhone(newStudent.parentPhone) || newStudent.parentPhone.trim(),
+         createdAt: new Date().toISOString(),
+       };
+       const ref = await addDoc(collection(db, 'students'), s);
+@@ -1245,6 +1256,11 @@ export default function AppDashboard() {
+                 <div className="search-bar"><input type="text" placeholder="Search..." value={searchQ} onChange={e => setSearchQ(e.target.value)} /></div>
+                 <button className="btn-secondary" onClick={() => setTransferDialog({ mode: 'in' })}>↘ Transfer In</button>
+                 <button className="btn-secondary" onClick={() => setShowImportWizard(true)}>⬆ Import</button>
++                {isAdmin && (
++                  <button className="btn-secondary" onClick={() => setShowConflictsPanel(true)}>
++                    ⚠ Conflicts{openConflictCount > 0 ? ` (${openConflictCount})` : ''}
++                  </button>
++                )}
+                 <button className="btn-primary" onClick={() => {
+                   // Pre-fill the form's class field with whatever real class is currently active,
+                   // as a convenience — but never with "All School": if that's the active tab (an
+@@ -1266,6 +1282,8 @@ export default function AppDashboard() {
+                   classStructure={classStructure}
+                   activeAcademicYearId={activeAcademicYearId || null}
+                   existingStudents={students}
++                  availableClasses={isAdmin ? (classStructure?.classes || []) : myAssignedClasses}
++                  canImportWholeSchool={isAdmin}
+                   onClose={() => setShowImportWizard(false)}
+                   onImported={(summary: ImportSummary) => {
+                     if (summary.imported > 0) loadStudents();
+@@ -1273,6 +1291,9 @@ export default function AppDashboard() {
+                   }}
+                 />
+               )}
++              {showConflictsPanel && (
++                <ConflictsPanel schoolId={schoolId} onClose={() => setShowConflictsPanel(false)} />
++              )}
+               {showAddStudent && (
+                 <div className="card" style={{ marginBottom: 24, border: '2px solid var(--mint)' }}>
+                   <div className="card-header">
+@@ -1907,6 +1928,7 @@ export default function AppDashboard() {
+         schoolName={userProfile.schoolName}
+         students={scopedStudents}
+         academicYearId={activeAcademicYearId}
++        allowedClassCodes={isAdmin ? undefined : myAssignedClasses}
+       />
+ 
+       {transferDialog && (
+diff --git a/src/services/importService.ts b/src/services/importService.ts
+index b5fda83..814c69f 100644
+--- a/src/services/importService.ts
++++ b/src/services/importService.ts
+@@ -4,10 +4,11 @@ import { doc, getDoc, setDoc, writeBatch, collection } from 'firebase/firestore'
+ import { db } from '../firebase';
+ import {
+   ClassStructure, Student, Enrolment,
+-  ImportFieldKey, ImportColumnMapping, ImportRow, ImportRowIssue, ImportSummary,
++  ImportFieldKey, ImportColumnMapping, ImportRow, ImportRowIssue, ImportScope, ImportSummary,
+   IMPORT_REQUIRED_FIELDS, normaliseAdmissionNo,
+ } from '../types';
+ import { normalisePhone } from '../utils/phoneValidation';
++import { resolveClassCode } from './classResolver';
+ 
+ // ─── Parsing ────────────────────────────────────────────────────────────────
+ 
+@@ -79,43 +80,94 @@ export async function parseImportFile(file: File): Promise<ParsedSheet> {
+ 
+ // ─── Column auto-detection ─────────────────────────────────────────────────
+ 
+-/** Known header aliases -> canonical field, used to pre-select the likely mapping. */
++/** Known header aliases -> canonical field, used to pre-select the likely mapping.
++ * Deliberately broad — real files spell these dozens of ways. Kept alias sets disjoint
++ * between fields where possible (e.g. "id no" only under nationalId, not admissionNo) so
++ * one ambiguous header doesn't get silently claimed by the wrong field. */
+ const FIELD_ALIASES: Record<ImportFieldKey, string[]> = {
+-  admissionNo: ['admission', 'admission no', 'admission number', 'adm no', 'adm', 'admno', 'reg no', 'registration no', 'index no'],
+-  name: ['student name', 'name', 'full name', 'learner', 'learner name', 'pupil name', 'student'],
+-  classCode: ['class', 'class code', 'classcode', 'grade', 'form', 'stream class', 'level'],
+-  parentName: ['guardian', 'parent', 'parent name', 'guardian name', 'parent/guardian', 'next of kin', 'father', 'mother'],
+-  parentPhone: ['phone', 'mobile', 'parent phone', 'guardian phone', 'contact', 'telephone', 'tel', 'phone number', 'mobile number', 'cell'],
+-  parentWhatsApp: ['whatsapp', 'whatsapp no', 'whatsapp number'],
+-  nationalId: ['national id', 'nationalid', 'id no', 'birth cert', 'birth certificate', 'birth cert no'],
++  admissionNo: [
++    'admission', 'admission no', 'admission no.', 'admission number', 'admission#', 'admission #',
++    'adm no', 'adm no.', 'adm', 'admno', 'adm number', 'adm num',
++    'reg no', 'reg no.', 'regno', 'registration no', 'registration number',
++    'index no', 'index number', 'student no', 'student number', 'studentno',
++    'pupil no', 'pupil number', 'learner no', 'learner number', 'roll no', 'roll number', 'serial no',
++  ],
++  name: [
++    'student name', 'name', 'full name', 'full names', 'names',
++    'learner', 'learner name', 'learner names', 'pupil name', "pupil's name",
++    'student', "student's name", 'child name', "child's name", "student full name",
++  ],
++  classCode: [
++    'class', 'class code', 'classcode', 'grade', 'form', 'stream class', 'level',
++    'class/stream', 'class stream', 'class & stream', 'class and stream',
++    'current class', 'grade/class', 'class level', 'class name', 'class/grade',
++  ],
++  streamCode: [
++    'stream', 'stream code', 'streamcode', 'section', 'stream name', 'stream only', 'class stream only',
++  ],
++  parentName: [
++    'guardian', 'parent', 'parent name', 'guardian name', 'parent/guardian', 'parent/guardian name',
++    'next of kin', 'nok', 'next of kin name', 'father', 'mother', "parent's name", "guardian's name",
++  ],
++  parentPhone: [
++    'phone', 'mobile', 'parent phone', 'guardian phone', 'contact', 'telephone', 'tel',
++    'phone number', 'mobile number', 'cell', 'contact no', 'contact number',
++    'parent contact', 'guardian contact', 'mobile no', 'tel no', 'sms number', 'sms no', 'phone no',
++  ],
++  parentWhatsApp: [
++    'whatsapp', 'whatsapp no', 'whatsapp number', 'whatsapp contact', 'wa number', 'wa no',
++  ],
++  nationalId: [
++    'national id', 'nationalid', 'id no', 'id number', 'birth cert', 'birth certificate',
++    'birth cert no', 'birth certificate no', 'b/c no', 'bcert', 'national id/birth cert',
++  ],
++  upiNumber: [
++    'upi', 'upi no', 'upi number', 'unique pupil identifier', 'nemis no', 'nemis number',
++    'learner unique no', 'unique learner no', 'uln',
++  ],
+ };
+ 
+ function norm(s: string): string {
+   return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+ }
+ 
+-/** Auto-detects the best-guess mapping from spreadsheet column headers to canonical fields. */
+-export function autoDetectMapping(columns: string[]): Partial<Record<ImportFieldKey, string>> {
++/** Auto-detects the best-guess mapping from spreadsheet column headers to canonical fields.
++ * `customAliases` (school-taught, persisted phrases — see `addCustomAlias`) are checked
++ * alongside the built-in library, so a school's own vocabulary gets recognised too.
++ *
++ * Runs in two global passes rather than per-field: ALL exact-match assignments happen first,
++ * across every field, before ANY fuzzy "contains" match is attempted. Otherwise field
++ * processing order would decide the outcome — e.g. "Guardian Contact" has an exact alias
++ * under parentPhone, but parentName's vague "guardian" alias would fuzzy-claim it first if
++ * parentName happened to be checked earlier. Exact should always beat fuzzy, never lose to it. */
++export function autoDetectMapping(
++  columns: string[],
++  customAliases?: Partial<Record<ImportFieldKey, string[]>>,
++): Partial<Record<ImportFieldKey, string>> {
+   const mapping: Partial<Record<ImportFieldKey, string>> = {};
+   const usedColumns = new Set<string>();
+-
+   const fieldKeys = Object.keys(FIELD_ALIASES) as ImportFieldKey[];
++  const aliasesByField = new Map<ImportFieldKey, string[]>(
++    fieldKeys.map(f => [f, [...(customAliases?.[f] || []), ...FIELD_ALIASES[f]].map(norm)]),
++  );
++
++  // Phase 1: exact matches only, across every field.
+   for (const field of fieldKeys) {
+-    const aliases = FIELD_ALIASES[field].map(norm);
+-    // exact match first, then "contains"
+-    let best: string | null = null;
++    const aliases = aliasesByField.get(field)!;
+     for (const col of columns) {
+       if (usedColumns.has(col)) continue;
+-      if (aliases.includes(norm(col))) { best = col; break; }
++      if (aliases.includes(norm(col))) { mapping[field] = col; usedColumns.add(col); break; }
+     }
+-    if (!best) {
+-      for (const col of columns) {
+-        if (usedColumns.has(col)) continue;
+-        const n = norm(col);
+-        if (aliases.some(a => n.includes(a) || a.includes(n))) { best = col; break; }
+-      }
++  }
++  // Phase 2: fuzzy "contains" matches, only for fields still unmapped.
++  for (const field of fieldKeys) {
++    if (mapping[field]) continue;
++    const aliases = aliasesByField.get(field)!;
++    for (const col of columns) {
++      if (usedColumns.has(col)) continue;
++      const n = norm(col);
++      if (aliases.some(a => n.includes(a) || a.includes(n))) { mapping[field] = col; usedColumns.add(col); break; }
+     }
+-    if (best) { mapping[field] = best; usedColumns.add(best); }
+   }
+   return mapping;
+ }
+@@ -140,6 +192,45 @@ export async function resetSavedMapping(schoolId: string): Promise<void> {
+   } as ImportColumnMapping);
+ }
+ 
++/** Reads just the school-taught alias phrases (e.g. "admin nos" → admissionNo), without
++ * touching the separate "last exact mapping" cache. */
++export async function getCustomAliases(schoolId: string): Promise<Partial<Record<ImportFieldKey, string[]>>> {
++  const saved = await getSavedMapping(schoolId);
++  return saved?.customFieldAliases || {};
++}
++
++/** Teaches the school's field library a new phrase for `field` — persists immediately, so
++ * every future import (any file) auto-detects a column with this text, not just this one. */
++export async function addCustomAlias(schoolId: string, field: ImportFieldKey, alias: string): Promise<Partial<Record<ImportFieldKey, string[]>>> {
++  const cleanAlias = alias.trim().toLowerCase();
++  if (!cleanAlias) return getCustomAliases(schoolId);
++  const saved = await getSavedMapping(schoolId);
++  const current = saved?.customFieldAliases || {};
++  const existing = new Set((current[field] || []).map(a => a.toLowerCase()));
++  existing.add(cleanAlias);
++  const next: Partial<Record<ImportFieldKey, string[]>> = { ...current, [field]: Array.from(existing) };
++  await setDoc(doc(db, 'importMappings', schoolId), {
++    id: schoolId, schoolId, mapping: saved?.mapping || {}, customFieldAliases: next,
++    updatedAt: new Date().toISOString(),
++  } as ImportColumnMapping);
++  return next;
++}
++
++/** Removes a school-taught alias phrase (e.g. it was added by mistake, or was never accurate). */
++export async function removeCustomAlias(schoolId: string, field: ImportFieldKey, alias: string): Promise<Partial<Record<ImportFieldKey, string[]>>> {
++  const cleanAlias = alias.trim().toLowerCase();
++  const saved = await getSavedMapping(schoolId);
++  const current = saved?.customFieldAliases || {};
++  const next: Partial<Record<ImportFieldKey, string[]>> = {
++    ...current, [field]: (current[field] || []).filter(a => a.toLowerCase() !== cleanAlias),
++  };
++  await setDoc(doc(db, 'importMappings', schoolId), {
++    id: schoolId, schoolId, mapping: saved?.mapping || {}, customFieldAliases: next,
++    updatedAt: new Date().toISOString(),
++  } as ImportColumnMapping);
++  return next;
++}
++
+ // ─── Row building + validation ─────────────────────────────────────────────
+ 
+ export function buildRows(
+@@ -160,9 +251,14 @@ export interface ValidationContext {
+   classStructure: ClassStructure | null;
+   existingStudents: Student[];       // already-loaded roster for this school (for dup checks)
+   activeAcademicYearId: string | null;
++  scope: ImportScope;
++  /** Required and enforced whenever scope === 'singleClass' — every valid row gets this
++   * class code regardless of what (if anything) the file itself says about class/stream. */
++  targetClassCode?: string;
+ }
+ 
+-/** Validates all rows in place (mutates issues/isValid), including cross-row duplicate detection. */
++/** Validates all rows in place (mutates issues/isValid/resolvedClassCode), including
++ * cross-row duplicate detection and — for `wholeSchool` scope — class/stream resolution. */
+ export function validateRows(rows: ImportRow[], ctx: ValidationContext): ImportRow[] {
+   const seenAdmissionNos = new Map<string, number>(); // admissionNo -> first rowIndex seen in this file
+   const existingAdmissionNos = new Set(ctx.existingStudents.map(s => normaliseAdmissionNo(s.admissionNo)));
+@@ -173,7 +269,6 @@ export function validateRows(rows: ImportRow[], ctx: ValidationContext): ImportR
+     const issues: ImportRowIssue[] = [];
+     const admissionNo = (row.values.admissionNo || '').trim();
+     const name = (row.values.name || '').trim();
+-    const classCode = (row.values.classCode || '').trim();
+     const phone = (row.values.parentPhone || '').trim();
+ 
+     if (!admissionNo) {
+@@ -206,17 +301,28 @@ export function validateRows(rows: ImportRow[], ctx: ValidationContext): ImportR
+       issues.push({ type: 'invalid_phone', field: 'parentPhone', message: `"${phone}" doesn't look like a valid Kenyan phone number.` });
+     }
+ 
+-    if (!classCode) {
+-      issues.push({ type: 'unknown_class', field: 'classCode', message: 'Class is missing.' });
+-    } else if (ctx.classStructure) {
+-      const known = ctx.classStructure.classes.some(c => c.toLowerCase() === classCode.toLowerCase());
+-      if (!known) {
+-        // Distinguish "unknown level" vs "known level, invalid/unrecognised stream suffix"
+-        const levelMatch = ctx.classStructure.levels.find(l => classCode.toLowerCase().startsWith(l.toLowerCase()));
+-        if (levelMatch && ctx.classStructure.streamsEnabled) {
+-          issues.push({ type: 'invalid_stream', field: 'classCode', message: `"${classCode}" isn't a recognised stream for ${levelMatch}.` });
++    if (ctx.scope === 'singleClass') {
++      // Class/stream columns (if mapped at all) are ignored entirely — every valid row goes
++      // into the one class the importer explicitly chose before starting the import.
++      if (!ctx.targetClassCode) {
++        issues.push({ type: 'unknown_class', message: 'No target class was selected for this import.' });
++      } else {
++        row.resolvedClassCode = ctx.targetClassCode;
++      }
++    } else {
++      const rawClass = (row.values.classCode || '').trim();
++      const rawStream = (row.values.streamCode || '').trim();
++      if (!rawClass && !rawStream) {
++        issues.push({ type: 'unknown_class', field: 'classCode', message: 'Class is missing.' });
++      } else {
++        const result = resolveClassCode(rawClass, rawStream, ctx.classStructure);
++        if (result.resolved) {
++          row.resolvedClassCode = result.resolved;
+         } else {
+-          issues.push({ type: 'unknown_class', field: 'classCode', message: `"${classCode}" isn't a class at this school.` });
++          const issueType: ImportRowIssue['type'] =
++            result.issue === 'no_level_match' || result.issue === 'ambiguous_level' || result.issue === 'no_class_data'
++              ? 'unknown_class' : 'invalid_stream';
++          issues.push({ type: issueType, field: 'classCode', message: result.message || `"${(rawClass + ' ' + rawStream).trim()}" couldn't be resolved to a class.` });
+         }
+       }
+     }
+@@ -258,19 +364,26 @@ export async function executeImport(params: ImportParams): Promise<ImportSummary
+   }
+   summary.skipped += rows.length - importable.length; // manually excluded rows
+ 
+-  let done = 0;
+-  for (let i = 0; i < toImport.length; i += BATCH_CHUNK_SIZE) {
+-    const chunk = toImport.slice(i, i + BATCH_CHUNK_SIZE);
++  // Rows that somehow reached here `isValid` but without a resolved class (shouldn't happen,
++  // since validateRows always sets one or raises an issue) are never silently written with a
++  // blank classCode — they're counted as failed instead.
++  const writable = toImport.filter(r => !!r.resolvedClassCode);
++  summary.failed += toImport.length - writable.length;
++
++  /** Commits one chunk. On failure, splits it in half and retries each half (down to chunks of
++   * 1) so a single bad/rejected row doesn't sink every other row that batched alongside it. */
++  async function commitChunk(chunk: ImportRow[]): Promise<number> {
+     try {
+       const batch = writeBatch(db);
+       for (const row of chunk) {
+         const v = row.values;
+         const studentRef = doc(collection(db, 'students'));
+         const now = new Date().toISOString();
++        const classCode = row.resolvedClassCode!;
+         const student: Omit<Student, 'id'> = {
+           name: (v.name || '').trim(),
+-          admissionNo: (v.admissionNo || '').trim(),
+-          classCode: (v.classCode || '').trim(),
++          admissionNo: normaliseAdmissionNo(v.admissionNo || ''),
++          classCode,
+           schoolId,
+           parentName: (v.parentName || '').trim(),
+           parentPhone: normalisePhone(v.parentPhone || '') || (v.parentPhone || '').trim(),
+@@ -281,25 +394,45 @@ export async function executeImport(params: ImportParams): Promise<ImportSummary
+         const enrolmentId = `${activeAcademicYearId}_${studentRef.id}`;
+         const enrolment: Enrolment = {
+           id: enrolmentId, studentId: studentRef.id, schoolId,
+-          academicYearId: activeAcademicYearId, classCode: student.classCode,
++          academicYearId: activeAcademicYearId, classCode,
+           status: 'active', createdAt: now,
+         };
+         batch.set(studentRef, { ...student, currentEnrolmentId: enrolmentId });
+         batch.set(doc(db, 'enrolments', enrolmentId), enrolment);
+       }
+       await batch.commit();
+-      summary.imported += chunk.length;
++      return chunk.length;
+     } catch (e) {
+-      console.error('Import batch failed:', e);
+-      summary.failed += chunk.length;
++      if (chunk.length === 1) {
++        console.error(`Import failed for row ${chunk[0].rowIndex}:`, e);
++        return 0;
++      }
++      console.warn(`Batch of ${chunk.length} failed, splitting and retrying:`, e);
++      const mid = Math.ceil(chunk.length / 2);
++      const [aOk, bOk] = await Promise.all([
++        commitChunk(chunk.slice(0, mid)),
++        commitChunk(chunk.slice(mid)),
++      ]);
++      return aOk + bOk;
+     }
++  }
++
++  let done = 0;
++  for (let i = 0; i < writable.length; i += BATCH_CHUNK_SIZE) {
++    const chunk = writable.slice(i, i + BATCH_CHUNK_SIZE);
++    const ok = await commitChunk(chunk);
++    summary.imported += ok;
++    summary.failed += chunk.length - ok;
+     done += chunk.length;
+-    onProgress?.(done, toImport.length);
++    onProgress?.(done, writable.length);
+   }
+ 
+   return summary;
+ }
+ 
+-export function requiredFieldsMapped(mapping: Partial<Record<ImportFieldKey, string>>): boolean {
+-  return IMPORT_REQUIRED_FIELDS.every(f => !!mapping[f]);
++export function requiredFieldsMapped(mapping: Partial<Record<ImportFieldKey, string>>, scope: ImportScope): boolean {
++  const required = scope === 'singleClass'
++    ? IMPORT_REQUIRED_FIELDS.filter(f => f !== 'classCode')
++    : IMPORT_REQUIRED_FIELDS;
++  return required.every(f => !!mapping[f]);
+ }
+diff --git a/src/services/reportsService.ts b/src/services/reportsService.ts
+index fa5a9ef..1d372df 100644
+--- a/src/services/reportsService.ts
++++ b/src/services/reportsService.ts
+@@ -334,12 +334,14 @@ export async function generateTermlyReport(
+     getDocs(query(
+       collection(db, 'attendance'),
+       where('schoolId', '==', schoolId),
++      ...(classCodeFilter ? [where('classCode', '==', classCodeFilter)] : []),
+       where('date', '>=', startDate),
+       where('date', '<=', endDate),
+     )),
+     getDocs(query(
+       collection(db, 'registers'),
+       where('schoolId', '==', schoolId),
++      ...(classCodeFilter ? [where('classCode', '==', classCodeFilter)] : []),
+       where('date', '>=', startDate),
+       where('date', '<=', endDate),
+     )),
+@@ -507,6 +509,7 @@ export async function generateWeeklySummary(
+     getDocs(query(
+       collection(db, 'registers'),
+       where('schoolId', '==', schoolId),
++      ...(classCodeFilter ? [where('classCode', '==', classCodeFilter)] : []),
+       where('date', '>=', start),
+       where('date', '<=', end),
+     )),
+@@ -597,6 +600,11 @@ export async function generateWeeklySummary(
+ /**
+  * Fetches complete attendance history for a single student.
+  * @param academicYearId  See generateTermlyReport — same year-scoping rationale.
++ * @param allowedClassCodes  Pass a class-restricted teacher's assigned classes to scope the
++ *   query to just those classes — required for the read to be provable under firestore.rules'
++ *   per-class access check (a teacher can't read attendance under a classCode they don't have
++ *   access to, even historical records from a student's prior class). Omit entirely for an
++ *   admin/whole-school viewer, whose access isn't classCode-scoped at all.
+  */
+ export async function generateStudentProfile(
+   studentId:   string,
+@@ -604,12 +612,19 @@ export async function generateStudentProfile(
+   schoolName:  string,
+   limitDays:   number = 180,
+   academicYearId?: string,
++  allowedClassCodes?: string[],
+ ): Promise<StudentProfile | null> {
+   // Pull attendance records for this student
+   const attQ = query(
+     collection(db, 'attendance'),
+     where('studentId', '==', studentId),
+     where('schoolId', '==', schoolId),
++    // Firestore 'in' supports up to 30 values — comfortably more than any real teacher's
++    // assigned-class list — and, combined with the composite index on
++    // (studentId, schoolId, classCode, date), makes this query provable under the
++    // classCode-scoped `hasClassAccess` rule instead of being rejected outright.
++    ...(allowedClassCodes && allowedClassCodes.length > 0
++      ? [where('classCode', 'in', allowedClassCodes.slice(0, 30))] : []),
+     orderBy('date', 'desc'),
+     limit(limitDays),
+   );
+diff --git a/src/types.ts b/src/types.ts
+index 515d529..e2ea2db 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -220,6 +220,7 @@ export interface Student {
+   parentWhatsApp: string;
+   createdAt: string;
+   nationalId?: string;
++  upiNumber?: string;         // Kenyan NEMIS/Unique Pupil Identifier, if the school tracks it
+   currentEnrolmentId?: string;  // set once Phase 2 (promotion engine) is wired in
+   archived?: boolean;           // true once graduated into the global archivedStudents collection
+ }
+@@ -421,31 +422,51 @@ export type ImportFieldKey =
+   | 'admissionNo'
+   | 'name'
+   | 'classCode'
++  | 'streamCode'
+   | 'parentName'
+   | 'parentPhone'
+   | 'parentWhatsApp'
+-  | 'nationalId';
++  | 'nationalId'
++  | 'upiNumber';
+ 
+-/** Which import fields are mandatory vs optional. */
++/** Which import fields are mandatory vs optional (before scope is taken into account —
++ * see `requiredFieldsMapped`, which is scope-aware). */
+ export const IMPORT_REQUIRED_FIELDS: ImportFieldKey[] = ['admissionNo', 'name', 'classCode'];
+-export const IMPORT_OPTIONAL_FIELDS: ImportFieldKey[] = ['parentName', 'parentPhone', 'parentWhatsApp', 'nationalId'];
++export const IMPORT_OPTIONAL_FIELDS: ImportFieldKey[] = ['streamCode', 'parentName', 'parentPhone', 'parentWhatsApp', 'nationalId', 'upiNumber'];
+ 
+ export const IMPORT_FIELD_LABELS: Record<ImportFieldKey, string> = {
+   admissionNo:    'Admission No.',
+   name:           'Student Name',
+-  classCode:      'Class',
++  classCode:      'Class (and stream, if combined)',
++  streamCode:     'Stream (only if in a separate column)',
+   parentName:     'Parent / Guardian Name',
+   parentPhone:    'Parent Phone (SMS)',
+   parentWhatsApp: 'Parent WhatsApp',
+   nationalId:     'National ID / Birth Cert No.',
++  upiNumber:      'UPI / NEMIS No.',
+ };
+ 
++/**
++ * Whole-school imports read the class (and optionally stream) from the file and resolve them
++ * against the school's class structure for every row. Single-class imports force every row into
++ * one admin/teacher-chosen class and ignore any class/stream column entirely — this is the
++ * default, safer mode, since it can't accidentally scatter students across the wrong classes.
++ */
++export type ImportScope = 'singleClass' | 'wholeSchool';
++
+ /** A saved column-mapping preset for a school, so the next import remembers it. */
+ export interface ImportColumnMapping {
+   id: string;                 // = schoolId, doc id
+   schoolId: string;
+-  /** spreadsheet column header -> canonical field key */
++  /** spreadsheet column header -> canonical field key (remembers last import's exact mapping) */
+   mapping: Partial<Record<ImportFieldKey, string>>;
++  /**
++   * School-taught aliases: header text phrases (not tied to any one file) that this school has
++   * told us mean a given field — e.g. a teacher whose files always call admission numbers
++   * "admin nos" adds it here once, and every future import auto-detects it, even in a
++   * differently-named file. Distinct from `mapping`, which only remembers one exact column name.
++   */
++  customFieldAliases?: Partial<Record<ImportFieldKey, string[]>>;
+   updatedAt: string;
+ }
+ 
+@@ -469,6 +490,10 @@ export interface ImportRowIssue {
+ export interface ImportRow {
+   rowIndex: number;            // 1-based row number in the source file (excluding header)
+   values: Partial<Record<ImportFieldKey, string>>;
++  /** The canonical class code this row will actually be written with, once resolved —
++   * either the extraction engine's result (wholeSchool scope) or the forced target class
++   * (singleClass scope). Never derived from `values.classCode` directly at import time. */
++  resolvedClassCode?: string;
+   issues: ImportRowIssue[];
+   /** True once the row has no blocking issues and is ready to import. */
+   isValid: boolean;
+@@ -484,3 +509,41 @@ export interface ImportSummary {
+   failed: number;
+ }
+ 
++// ── Duplicate/sibling/ghost-student conflict detection ─────────────────────
++// Written by the scanSchoolForConflicts and onStudentWrittenCheckConflicts Cloud Functions
++// (see functions/src/conflicts.ts and functions/src/dedupe.ts) into the `conflicts` collection.
++
++export type ConflictType = 'duplicate_admission' | 'duplicate_student' | 'phone_conflict';
++export type ConflictStatus = 'open' | 'dismissed' | 'resolved';
++
++/** Denormalised snapshot of one side of a flagged pair — enough to render the conflicts panel
++ * without extra reads. May go stale if the student record changes after the conflict was
++ * flagged; a rescan refreshes it. */
++export interface ConflictStudentSnapshot {
++  id: string;
++  name: string;
++  admissionNo: string;
++  classCode: string;
++  parentName: string;
++  parentPhone: string;
++}
++
++export interface Conflict {
++  id: string;
++  schoolId: string;
++  type: ConflictType;
++  studentIds: string[];
++  students: ConflictStudentSnapshot[];
++  reason: string;
++  status: ConflictStatus;
++  createdAt: string;
++  updatedAt: string;
++  resolutionNote?: string;
++}
++
++export const CONFLICT_TYPE_LABELS: Record<ConflictType, string> = {
++  duplicate_admission: 'Duplicate admission no.',
++  duplicate_student:   'Likely duplicate student',
++  phone_conflict:       'Shared phone, different family',
++};
++
