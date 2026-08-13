@@ -547,3 +547,133 @@ export const CONFLICT_TYPE_LABELS: Record<ConflictType, string> = {
   phone_conflict:       'Shared phone, different family',
 };
 
+// ─── Message scheduling ─────────────────────────────────────────────────────
+// Mirrors functions/src/scheduleTypes.ts exactly — keep both in sync. See
+// functions/src/scheduleManagement.ts for where these docs actually get created/mutated;
+// the frontend only ever reads scheduledMessages directly (firestore.rules denies client
+// writes to it) and calls the Cloud Functions callables for every mutation.
+
+export type ScheduleAudienceType =
+  | 'teachers_all'      // internal — every teacher at the school
+  | 'teachers_selected' // internal — specific teacher(s)
+  | 'parents_school'    // every parent at the school
+  | 'parents_class'     // every parent in one class
+  | 'parents_selected'  // specific student(s)' parent(s)
+  | 'holiday_notice';   // goodbye / welcome-back broadcast tied to a holiday period
+
+export type ScheduleFrequency = 'once' | 'daily' | 'weekly';
+
+export type ScheduleStatus = 'active' | 'insufficientTokens' | 'stopped' | 'completed';
+
+export type ScheduleFundingSource = 'own' | 'school';
+
+export type HolidayNoticeVariant = 'goodbye' | 'welcomeBack';
+
+export const SCHEDULE_AUDIENCE_LABELS: Record<ScheduleAudienceType, string> = {
+  teachers_all: 'All teachers (internal)',
+  teachers_selected: 'Selected teachers (internal)',
+  parents_school: 'All parents (school-wide)',
+  parents_class: 'Parents of one class',
+  parents_selected: 'Selected parents',
+  holiday_notice: 'Holiday notice to parents',
+};
+
+export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = {
+  once: 'One-off, on a set date',
+  daily: 'Daily',
+  weekly: 'Weekly',
+};
+
+export const SCHEDULE_STATUS_LABELS: Record<ScheduleStatus, string> = {
+  active: 'Active',
+  insufficientTokens: 'Needs top-up',
+  stopped: 'Stopped',
+  completed: 'Completed',
+};
+
+/** One doc per schedule under `scheduledMessages/{id}` — a school or class may have several
+ * running independently at once, each tracked and funded on its own. */
+export interface ScheduledMessage {
+  id: string;
+  schoolId: string;
+  createdBy: string;
+  createdByRole: UserRole;
+  audienceType: ScheduleAudienceType;
+
+  recipientUids?: string[];         // teachers_selected
+  recipientStudentIds?: string[];   // parents_selected
+  classCode?: string;                // parents_class, or a class-scoped teachers_selected
+
+  messageBody: string;
+  frequency: ScheduleFrequency;
+  timeOfDay: string;                 // 'HH:mm', Africa/Nairobi
+  startDate: string;                  // 'YYYY-MM-DD'
+  endDate?: string;                   // 'YYYY-MM-DD', inclusive — required for daily/weekly
+  includeWeekends: boolean;
+
+  fundingSource: ScheduleFundingSource;
+  fundingSourceUid: string;
+  tokensRequired: number;             // full cost as last calculated
+  tokensAllocated: number;            // actually reserved (< tokensRequired only if underfunded)
+  tokensUsed: number;
+  insufficientTokens: boolean;
+
+  status: ScheduleStatus;
+  nextRunAt: string | null;
+  lastRunAt?: string;
+  occurrencesPlanned: number;
+  occurrencesSent: number;
+
+  linkedHolidayPeriodId?: string;
+  holidayNoticeVariant?: HolidayNoticeVariant;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One doc per holiday under `schoolHolidays/{id}`. Single-day holidays have startDate === endDate. */
+export interface HolidayPeriod {
+  id: string;
+  schoolId: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  kind: 'public' | 'custom';
+  sendGoodbye: boolean;
+  goodbyeMessage?: string;
+  goodbyeScheduleId?: string;
+  sendWelcomeBack: boolean;
+  welcomeBackMessage?: string;
+  welcomeBackScheduleId?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Immutable log doc under `teacherTokenAllocations/{id}` — never edited after creation. */
+export interface TeacherTokenAllocation {
+  id: string;
+  schoolId: string;
+  teacherUid: string;
+  amount: number;
+  performedBy: string;
+  performedAt: string;
+  teacherBalanceAfter: number;
+  adminBalanceAfter: number;
+}
+
+export const SCHEDULE_TOKEN_MULTIPLIER = 1.2;
+
+/** Token cost of ONE occurrence of a scheduled send — segments × recipients × 1.2, rounded
+ * to the nearest whole token (7.2 → 7, 7.6 → 8). Mirrors calcScheduleOccurrenceTokenCost in
+ * functions/src/scheduleTypes.ts, which is the authoritative copy used when tokens are
+ * actually reserved/spent — this one is for the live preview only. */
+export function calcScheduleOccurrenceTokenCost(cleanedMessageText: string, recipientCount: number): number {
+  const segments = countSmsSegments(cleanedMessageText);
+  return Math.round(segments * recipientCount * SCHEDULE_TOKEN_MULTIPLIER);
+}
+
+export function calcScheduleTotalTokenCost(occurrenceCost: number, occurrencesPlanned: number): number {
+  return occurrenceCost * occurrencesPlanned;
+}
+

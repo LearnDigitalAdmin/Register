@@ -43,6 +43,9 @@ import AcademicYearPanel from '../components/AcademicYearPanel';
 import StudentImportWizard from '../components/StudentImportWizard';
 import ConflictsPanel from '../components/ConflictsPanel';
 import { getConflicts } from '../services/conflictsService';
+import ScheduledMessagesPanel from '../components/ScheduledMessagesPanel';
+import HolidaySettingsPanel from '../components/HolidaySettingsPanel';
+import TeacherTokenAllocationModal from '../components/TeacherTokenAllocationModal';
 
 
 const STATUS_CYCLE: AttendanceStatus[] = ['present', 'absent', 'late', 'excused'];
@@ -50,7 +53,7 @@ const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: '
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings' | 'academicYears';
+type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings' | 'academicYears' | 'scheduling';
 
 // ─── Compose box with live full-message preview ───────────────────────────────
 function SmsComposeBox({
@@ -256,6 +259,7 @@ function MobileDrawerNav({
     { id: 'register',  icon: '📋', label: 'Register' },
     { id: 'students',  icon: '👥', label: 'Students' },
     { id: 'messages',  icon: '💬', label: 'Send SMS' },
+    { id: 'scheduling', icon: '⏰', label: 'Scheduling' },
     { id: 'logs',      icon: '🗂️', label: 'Msg Logs' },
     { id: 'reports',   icon: '📊', label: 'Reports' },
     { id: 'academicYears', icon: '🎓', label: 'Academic Years', adminOnly: true },
@@ -267,12 +271,12 @@ function MobileDrawerNav({
   const PANEL_LABEL: Record<Panel, string> = {
     overview: 'Overview', register: "Today's Register", students: 'Students',
     messages: 'Send SMS', logs: 'Message Logs', reports: 'Reports', settings: 'Settings',
-    academicYears: 'Academic Years'
+    academicYears: 'Academic Years', scheduling: 'Scheduling',
   };
   const PANEL_ICON: Record<Panel, string> = {
     overview: '🏠', register: '📋', students: '👥',
     messages: '💬', logs: '🗂️', reports: '📊', settings: '⚙️',
-    academicYears: '📅'
+    academicYears: '📅', scheduling: '⏰',
   };
 
   function navigate(id: Panel) { setPanel(id); setOpen(false); }
@@ -439,6 +443,7 @@ export default function AppDashboard() {
   const [transferDialog, setTransferDialog] = useState<{ mode: 'in' | 'out' | 'internal'; student?: Student } | null>(null);
   const [showAssignmentManager, setShowAssignmentManager] = useState(false);
   const [showChangeSchool, setShowChangeSchool] = useState(false);
+  const [showTokenAllocation, setShowTokenAllocation] = useState(false);
 
   const [schoolInfo,     setSchoolInfo]     = useState<SchoolInfo | null>(null);
   const [settingsPhone,  setSettingsPhone]  = useState('');
@@ -884,6 +889,7 @@ export default function AppDashboard() {
     { id: 'register',  icon: '📋', label: "Today's Register" },
     { id: 'students',  icon: '👥', label: 'Students' },
     { id: 'messages',  icon: '💬', label: 'Send SMS' },
+    { id: 'scheduling', icon: '⏰', label: 'Scheduling' },
     { id: 'logs',      icon: '🗂️', label: 'Message Logs' },
     { id: 'reports',   icon: '📊', label: 'Reports' },
     { id: 'academicYears', icon: '🎓', label: 'Academic Years', adminOnly: true },
@@ -1757,6 +1763,27 @@ export default function AppDashboard() {
           </>
         )}
 
+        {/* ── SCHEDULING ────────────────────────────────────────────────── */}
+        {panel === 'scheduling' && (
+          <>
+            <div className="page-header"><div><div className="page-title">Scheduling</div><div className="page-sub">Set up recurring or future-dated messages to teachers and parents</div></div></div>
+            <div className="page-body">
+              <ScheduledMessagesPanel
+                schoolId={schoolId}
+                boardingType={schoolInfo?.boardingType}
+                currentUserUid={userProfile.uid}
+                currentUserRole={userProfile.role}
+                assignedClasses={myAssignedClasses}
+                classOptions={classStructure?.classes || []}
+                tokensAvailable={tokens}
+                isAdmin={isAdmin}
+                toast={toast}
+                onTokensChanged={refreshProfile}
+              />
+            </div>
+          </>
+        )}
+
         {/* ── ACADEMIC YEARS ────────────────────────────────────────────── */}
         {panel === 'academicYears' && isAdmin && (
           <>
@@ -1833,6 +1860,11 @@ export default function AppDashboard() {
                         👩‍🏫 Manage Teacher Assignments & Transfers →
                       </button>
                     )}
+                    {isAdmin && (
+                      <button className="btn-secondary" style={{ marginTop: 10 }} onClick={() => setShowTokenAllocation(true)}>
+                        🎟️ Allocate Tokens to Teachers →
+                      </button>
+                    )}
                     {!isAdmin && (
                       <button className="btn-secondary" style={{ marginTop: 14 }} onClick={() => setShowChangeSchool(true)}>
                         🏫 Change School →
@@ -1841,6 +1873,11 @@ export default function AppDashboard() {
                   </div>
                 </div>
               </div>
+              {isAdmin && (
+                <div style={{ marginTop: 24 }}>
+                  <HolidaySettingsPanel schoolId={schoolId} currentUserUid={userProfile.uid} toast={toast} />
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1958,6 +1995,17 @@ export default function AppDashboard() {
           teacher={userProfile}
           onClose={() => setShowChangeSchool(false)}
           onDone={async () => { setShowChangeSchool(false); await refreshProfile(); toast('✅ Moved to your new school.'); }}
+        />
+      )}
+
+      {isAdmin && (
+        <TeacherTokenAllocationModal
+          isOpen={showTokenAllocation}
+          onClose={() => setShowTokenAllocation(false)}
+          schoolId={schoolId}
+          adminTokensAvailable={tokens}
+          onDone={refreshProfile}
+          toast={toast}
         />
       )}
 

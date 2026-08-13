@@ -84,6 +84,46 @@ export function isRegisterRequired(dateStr: string, boardingType: BoardingType |
   return { required: true };
 }
 
+/**
+ * A school-defined holiday period — mid-term breaks, school-specific closures, or a
+ * public holiday the school has added manually (e.g. one gazetted late/regionally, before
+ * MANUALLY_GAZETTED above is updated). Single-day holidays have startDate === endDate.
+ * Mirrors the shape of the `schoolHolidays` Firestore doc — kept minimal here since this
+ * file has no Firestore access; callers pass in whatever periods they've already fetched.
+ */
+export interface HolidayPeriodRange {
+  startDate: string; // 'YYYY-MM-DD'
+  endDate: string;   // 'YYYY-MM-DD', inclusive
+}
+
+/** True if dateStr falls within any of the given (inclusive) custom holiday periods. */
+export function isInCustomHolidayPeriod(dateStr: string, periods: HolidayPeriodRange[]): boolean {
+  return periods.some(p => dateStr >= p.startDate && dateStr <= p.endDate);
+}
+
+/**
+ * Combined check used by both register reminders and message scheduling: is this date
+ * one on which nothing automated should fire for this school? Considers, in order: boarding
+ * override, gazetted public holidays, the school's own custom holiday periods, and (only if
+ * `includeWeekends` is false) weekends. `includeWeekends` defaults to false to match the
+ * existing day-school register behaviour; pass `true` for schedules that explicitly opt in
+ * to running on weekends.
+ */
+export function isDateBlockedForSchool(
+  dateStr: string,
+  boardingType: BoardingType | undefined,
+  customPeriods: HolidayPeriodRange[],
+  includeWeekends = false,
+): { blocked: boolean; reason?: string } {
+  // Boarding schools ignore public holidays and weekends for the register itself, but a
+  // school-defined closure (mid-term break, students sent home, etc.) still applies.
+  const holiday = getKenyanHolidayName(dateStr);
+  if (holiday && boardingType !== 'boarding') return { blocked: true, reason: `Public holiday — ${holiday}` };
+  if (isInCustomHolidayPeriod(dateStr, customPeriods)) return { blocked: true, reason: 'School holiday period' };
+  if (!includeWeekends && isWeekend(dateStr) && boardingType !== 'boarding') return { blocked: true, reason: 'Weekend' };
+  return { blocked: false };
+}
+
 /** Today's date in East Africa Time (UTC+3, no DST) as 'YYYY-MM-DD'. */
 export function todayEAT(): string {
   const now = new Date();

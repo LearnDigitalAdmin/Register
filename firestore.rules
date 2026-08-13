@@ -208,5 +208,31 @@ service cloud.firestore {
         (isSignedIn() && myRole() == 'schoolAdmin' && resource.data.schoolId == mySchoolId());
       allow delete: if false;
     }
+
+    // ── scheduling ───────────────────────────────────────────
+    // A scheduled message reserves and later spends tokens (see functions/src/scheduleManagement.ts
+    // and scheduledMessagesPoller.ts), so every write MUST go through those callables — the admin
+    // SDK they use bypasses these rules entirely. Clients only ever read; create/update/delete are
+    // hard-denied here so a schedule's token bookkeeping can never be touched directly.
+    match /scheduledMessages/{id} {
+      allow read: if resource != null && isSchoolMember(resource.data.schoolId);
+      allow create, update, delete: if false;
+    }
+    // Holiday periods move no tokens, so schoolAdmins can manage them directly from the client.
+    // Any school member can read (needed to show blocked dates in the schedule composer).
+    match /schoolHolidays/{id} {
+      allow read: if resource != null && isSchoolMember(resource.data.schoolId);
+      allow create, update: if isSchoolAdminOf(request.resource.data.schoolId);
+      allow delete: if isSchoolAdminOf(resource.data.schoolId);
+    }
+    // Immutable log of school→teacher token allocations. Only the allocateTokensToTeachers
+    // Cloud Function may write it (admin SDK, bypasses rules) — same reasoning as
+    // scheduledMessages above. The admin who allocated it and the teacher it was allocated to
+    // may both read their own history.
+    match /teacherTokenAllocations/{id} {
+      allow read: if resource != null &&
+        (isSchoolAdminOf(resource.data.schoolId) || request.auth.uid == resource.data.teacherUid);
+      allow create, update, delete: if false;
+    }
   }
 }

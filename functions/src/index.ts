@@ -2,9 +2,14 @@ import { onCall, CallableRequest, HttpsError } from "firebase-functions/https";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import axios from "axios";
+import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, SMS_CONFIG as SHARED_SMS_CONFIG } from "./smsSender";
 
 export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
 export { scanSchoolForConflicts, onStudentWrittenCheckConflicts } from "./conflicts";
+export { scheduledMessagesPoller } from "./scheduledMessagesPoller";
+export { createScheduledMessage, editScheduledMessage, stopScheduledMessage, rescheduleCompletedMessage, deleteScheduledMessage, resetSchedulesForNewAcademicYear } from "./scheduleManagement";
+export { allocateTokensToTeachers } from "./tokenAllocation";
+export { recheckInsufficientSchedulesOnTopUp } from "./insufficientTokensRecheck";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -20,31 +25,16 @@ const PAYSTACK_API_BASE = "https://api.paystack.co";
 
 
 // ─── Config ───────────────────────────────────────────────────────────────────
- 
-const SMS_CONFIG = {
-  API_URL:    "https://smsportal.hostpinnacle.co.ke/SMSApi/send",
-  USERID:     process.env.HP_SMS_USERID    || "",
-  PASSWORD:   process.env.HP_SMS_PASSWORD  || "",
-  APIKEY:     process.env.HP_SMS_APIKEY    || "",
-  SENDER_ID:  process.env.HP_SMS_SENDERID  || "",
-  MAX_LENGTH: 400,
-};
+// SMS_CONFIG, sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText, and containsLink now
+// live in ./smsSender.ts (shared with registerReminders.ts and scheduledMessagesPoller.ts).
+// Local aliases below keep the rest of this file's code unchanged.
+const SMS_CONFIG = SHARED_SMS_CONFIG;
+const normalizeSmsPhone = sharedNormalizeSmsPhone;
+const sanitizeSmsText = sharedSanitizeSmsText;
+const containsLink = sharedContainsLink;
  
 // ─── Types ────────────────────────────────────────────────────────────────────
- 
-interface SmsSendOptions {
-  /** One number or a pre-joined comma-separated string of numbers. */
-  mobile:          string;
-  message:         string;
-  senderId?:       string;
-  duplicateCheck?: boolean;
-}
- 
-interface SmsSendResult {
-  success: boolean;
-  raw?:    unknown;
-  error?:  string;
-}
+// SmsSendOptions/SmsSendResult now live in ./smsSender.ts.
  
 interface SendSmsRequest {
   /** Single phone number or array of phone numbers. */
@@ -65,91 +55,8 @@ interface SendSmsResponse {
 }
  
 // ─── Utils ────────────────────────────────────────────────────────────────────
- 
-function normalizeSmsPhone(raw: string): string {
-  const clean = raw.replace(/[\s\-\+]/g, "");
-  if (clean.startsWith("2540"))                        return "254" + clean.substring(4);
-  if (clean.startsWith("254"))                         return clean;
-  if (clean.startsWith("0"))                           return "254" + clean.substring(1);
-  if (clean.startsWith("7") || clean.startsWith("1")) return "254" + clean;
-  return clean;
-}
-
-function sanitizeSmsText(text: string): string {
-  // Preserve \n as a real newline placeholder before collapsing spaces
-  const stripped = text
-    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
-    .replace(/[\u{2600}-\u{27BF}]/gu, "")
-    .replace(/[^\x20-\x7E\xA0-\xFF\n]/gu, "")  // ← allow \n through
-    .replace(/[^\S\n]+/g, " ")                   // ← collapse spaces but NOT newlines
-    .replace(/\n{3,}/g, "\n\n")                  // ← max 2 consecutive newlines
-    .trim();
-
-  return stripped.length > SMS_CONFIG.MAX_LENGTH
-    ? stripped.substring(0, SMS_CONFIG.MAX_LENGTH - 3) + "..."
-    : stripped;
-}
-
-// Mirrors the LINK_PATTERN in src/types.ts (containsLink/stripLinks) — this is the final,
-// server-side checkpoint before anything actually reaches HostPinnacle, independent of
-// whatever cleaning already happened client-side. Links are never allowed in outbound SMS.
-const LINK_PATTERN = /((https?:\/\/|www\.)\S+)|(\b[a-z0-9-]+\.(com|co\.ke|ke|org|net|info|xyz|link|io|me|ly|app|shop)\b\S*)/gi;
-
-function containsLink(text: string): boolean {
-  LINK_PATTERN.lastIndex = 0;
-  return LINK_PATTERN.test(text);
-}
- 
-async function sendHostPinnacleSms(opts: SmsSendOptions): Promise<SmsSendResult> {
-  try {
-    if (!SMS_CONFIG.USERID || !SMS_CONFIG.APIKEY) {
-      console.warn("HostPinnacle SMS credentials not configured — skipping SMS.");
-      return { success: false, error: "SMS credentials not configured" };
-    }
- 
-    const params = new URLSearchParams({
-      userid:         SMS_CONFIG.USERID,
-      password:       SMS_CONFIG.PASSWORD,
-      sendMethod:     "quick",
-      mobile:         opts.mobile,
-      msg:            opts.message,
-      senderid:       opts.senderId || SMS_CONFIG.SENDER_ID,
-      msgType:        "text",
-      duplicatecheck: opts.duplicateCheck === false ? "false" : "true",
-      output:         "json",
-    });
- 
-    const response = await axios.post(
-      SMS_CONFIG.API_URL,
-      params.toString(),
-      {
-        headers: {
-          "apikey":       SMS_CONFIG.APIKEY,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        timeout: 10_000,
-      },
-    );
- 
-    const data = response.data;
-    console.log(`HostPinnacle SMS response for ${opts.mobile}:`, JSON.stringify(data));
- 
-    const isError =
-      data?.status === "error" ||
-      data?.ErrorCode !== undefined ||
-      (typeof data?.status === "string" && data.status.toLowerCase().includes("fail"));
- 
-    if (isError) {
-      return { success: false, raw: data, error: data?.message || "API error" };
-    }
- 
-    return { success: true, raw: data };
-  } catch (err: any) {
-    const msg = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
-    console.error(`HostPinnacle SMS send error for ${opts.mobile}:`, msg);
-    return { success: false, error: msg };
-  }
-}
+// normalizeSmsPhone, sanitizeSmsText, containsLink, and sendHostPinnacleSms are now
+// imported from ./smsSender.ts (aliased above) — this file no longer keeps its own copy.
  
 // ─── Cloud Function ───────────────────────────────────────────────────────────
  

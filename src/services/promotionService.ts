@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { AcademicYear, ClassStructure, Enrolment, School, Student } from '../types';
 import { classToLevelAndStream } from './academicYearService';
 import { archiveGraduate } from './archiveService';
+import { resetSchedulesForNewAcademicYear } from './scheduleService';
 
 export type PromotionAction = 'promote' | 'repeat' | 'transfer' | 'keep' | 'graduate';
 
@@ -179,6 +180,11 @@ export async function applyPromotion(preview: PromotionPreview): Promise<{ toYea
   for (const e of entries.filter(x => x.action === 'graduate')) {
     await archiveGraduate({ schoolId, studentId: e.studentId });
   }
+
+  // Class codes shift on promotion, so any scheduled message still targeting last year's
+  // classCode would silently misfire — stop everything school-wide (tokens refunded) and
+  // let admins/teachers re-create what they still need against the new roster.
+  try { await resetSchedulesForNewAcademicYear(schoolId); } catch (e) { console.error('resetSchedulesForNewAcademicYear failed:', e); }
 
   return { toYearId };
 }

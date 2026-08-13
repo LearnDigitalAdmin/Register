@@ -100,3 +100,34 @@ export function isRegisterRequired(dateStr: string, boardingType: BoardingType |
   if (isWeekend(dateStr)) return { required: false, reason: 'Weekend' };
   return { required: true };
 }
+
+/** A school-defined holiday period — mid-term breaks, custom closures, or a public holiday
+ * the school added manually. Single-day holidays have startDate === endDate. Mirrors
+ * functions/src/kenyanHolidays.ts's HolidayPeriodRange. */
+export interface HolidayPeriodRange {
+  startDate: string; // 'YYYY-MM-DD'
+  endDate: string;   // 'YYYY-MM-DD', inclusive
+}
+
+/** True if dateStr falls within any of the given (inclusive) custom holiday periods. */
+export function isInCustomHolidayPeriod(dateStr: string, periods: HolidayPeriodRange[]): boolean {
+  return periods.some(p => dateStr >= p.startDate && dateStr <= p.endDate);
+}
+
+/**
+ * Combined check used by the scheduling composer/calendar (and mirrored server-side for
+ * actual enforcement): is this date one nothing automated should fire on for this school?
+ * `includeWeekends` defaults to false, matching day-school register behaviour.
+ */
+export function isDateBlockedForSchool(
+  dateStr: string,
+  boardingType: BoardingType | undefined,
+  customPeriods: HolidayPeriodRange[],
+  includeWeekends = false,
+): { blocked: boolean; reason?: string } {
+  const holiday = getKenyanHolidayName(dateStr);
+  if (holiday && boardingType !== 'boarding') return { blocked: true, reason: `Public holiday — ${holiday}` };
+  if (isInCustomHolidayPeriod(dateStr, customPeriods)) return { blocked: true, reason: 'School holiday period' };
+  if (!includeWeekends && isWeekend(dateStr) && boardingType !== 'boarding') return { blocked: true, reason: 'Weekend' };
+  return { blocked: false };
+}

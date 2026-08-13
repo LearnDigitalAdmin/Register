@@ -1,7 +1,8 @@
 import { onSchedule } from "firebase-functions/scheduler";
 import * as admin from "firebase-admin";
-import axios from "axios";
-import { isRegisterRequired, todayEAT, BoardingType } from "./kenyanHolidays";
+import { isDateBlockedForSchool, todayEAT, BoardingType } from "./kenyanHolidays";
+import { sendHostPinnacleSms, normalizeSmsPhone } from "./smsSender";
+import { getHolidayRangesForDate } from "./holidayLookup";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -9,44 +10,11 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// Same HostPinnacle credentials as the `sendSms` callable in index.ts, read from the same
-// env vars — kept self-contained here (rather than importing from index.ts) to avoid a
-// circular import between the two files.
-const SMS_CONFIG = {
-  API_URL:   "https://smsportal.hostpinnacle.co.ke/SMSApi/send",
-  USERID:    process.env.HP_SMS_USERID   || "",
-  PASSWORD:  process.env.HP_SMS_PASSWORD || "",
-  APIKEY:    process.env.HP_SMS_APIKEY   || "",
-  SENDER_ID: process.env.HP_SMS_SENDERID || "",
-};
-
-function normalizeSmsPhone(raw: string): string {
-  const clean = (raw || "").replace(/[\s\-\+]/g, "");
-  if (clean.startsWith("2540")) return "254" + clean.substring(4);
-  if (clean.startsWith("254"))  return clean;
-  if (clean.startsWith("0"))    return "254" + clean.substring(1);
-  if (clean.startsWith("7") || clean.startsWith("1")) return "254" + clean;
-  return clean;
-}
-
 async function sendReminderSms(mobile: string, message: string): Promise<void> {
   if (!mobile) return;
-  if (!SMS_CONFIG.USERID || !SMS_CONFIG.APIKEY) {
-    console.warn("HostPinnacle SMS credentials not configured — skipping register-reminder SMS.");
-    return;
-  }
-  try {
-    const params = new URLSearchParams({
-      userid: SMS_CONFIG.USERID, password: SMS_CONFIG.PASSWORD, sendMethod: "quick",
-      mobile, msg: message, senderid: SMS_CONFIG.SENDER_ID, msgType: "text",
-      duplicatecheck: "true", output: "json",
-    });
-    await axios.post(SMS_CONFIG.API_URL, params.toString(), {
-      headers: { apikey: SMS_CONFIG.APIKEY, "Content-Type": "application/x-www-form-urlencoded" },
-      timeout: 10_000,
-    });
-  } catch (err: any) {
-    console.error(`Register-reminder SMS failed for ${mobile}:`, err?.response?.data || err.message);
+  const result = await sendHostPinnacleSms({ mobile, message });
+  if (!result.success) {
+    console.error(`Register-reminder SMS failed for ${mobile}:`, result.error);
   }
 }
 
@@ -73,8 +41,9 @@ async function findUnmarkedClassesBySchool(): Promise<Map<string, { school: Scho
   const schoolsSnap = await db.collection("schools").get();
   for (const schoolDoc of schoolsSnap.docs) {
     const school = { id: schoolDoc.id, ...(schoolDoc.data() as any) } as SchoolDoc;
-    const availability = isRegisterRequired(today, school.boardingType);
-    if (!availability.required) continue;
+    const customHolidays = await getHolidayRangesForDate(db, school.id, today);
+    const blocked = isDateBlockedForSchool(today, school.boardingType, customHolidays);
+    if (blocked.blocked) continue;
 
     const structureSnap = await db.collection("classStructures").doc(school.id).get();
     const classes = (structureSnap.data() as ClassStructureDoc | undefined)?.classes || [];
