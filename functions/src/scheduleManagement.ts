@@ -21,6 +21,25 @@ const db = admin.firestore();
 // worst case a schedule finishes with a small unused balance, refunded on completion/stop.
 const WRAPPER_PADDING_CHARS = 45;
 
+/** Recursively strips keys whose value is `undefined` (top-level and nested plain objects;
+ * arrays are left as-is). Firestore's Admin SDK rejects `undefined` field values outright
+ * (see the "Value for argument ... is not a valid Firestore document" crash this fixes),
+ * so any payload built from a type with optional fields — linkedHolidayPeriodId, classCode,
+ * endDate, recipientUids, recipientStudentIds, holidayNoticeVariant, etc. — must be run
+ * through this before .set()/.update()/.create() rather than patching one field at a time. */
+function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) continue;
+    if (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) {
+      out[key] = stripUndefined(value as Record<string, unknown>);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as T;
+}
+
 interface UserDoc {
   role: "schoolAdmin" | "teacherAdmin";
   schoolId: string;
@@ -228,7 +247,7 @@ export const createScheduledMessage = onCall(
       createdAt: now,
       updatedAt: now,
     };
-    await docRef.set(doc);
+    await docRef.set(stripUndefined(doc as unknown as Record<string, unknown>));
 
     if (insufficientTokens) {
       // Notification SMS to the funding account is sent by insufficientTokensRecheck's
@@ -304,7 +323,7 @@ export const editScheduledMessage = onCall(
       occurrencesSent: 0,
       updatedAt: new Date().toISOString(),
     };
-    await ref.update(update as any);
+    await ref.update(stripUndefined(update as Record<string, unknown>));
 
     return { tokensRequired: plan.totalCost, tokensAllocated, insufficientTokens, occurrencesPlanned: plan.occurrencesPlanned, nextRunAt: update.nextRunAt };
   },
@@ -436,7 +455,7 @@ export const rescheduleCompletedMessage = onCall(
       createdAt: now,
       updatedAt: now,
     };
-    await newRef.set(newDoc);
+    await newRef.set(stripUndefined(newDoc as unknown as Record<string, unknown>));
 
     return { id: newRef.id, tokensRequired: plan.totalCost, tokensAllocated, insufficientTokens, nextRunAt: newDoc.nextRunAt };
   },

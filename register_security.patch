@@ -1,0 +1,185 @@
+diff --git a/functions/.env b/functions/.env
+deleted file mode 100644
+index b8feeed..0000000
+--- a/functions/.env
++++ /dev/null
+@@ -1,4 +0,0 @@
+-HP_SMS_USERID=cogvanacorp
+-HP_SMS_PASSWORD=Cogvana*101
+-HP_SMS_APIKEY=2574f309ed4b05e223ffb9f008df3059672ef642
+-HP_SMS_SENDERID=SAMUHIA
+\ No newline at end of file
+diff --git a/functions/src/index.ts b/functions/src/index.ts
+index 2e7cc04..5d1900f 100644
+--- a/functions/src/index.ts
++++ b/functions/src/index.ts
+@@ -2,7 +2,7 @@ import { onCall, CallableRequest, HttpsError } from "firebase-functions/https";
+ import { defineSecret } from "firebase-functions/params";
+ import * as admin from "firebase-admin";
+ import axios from "axios";
+-import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, SMS_CONFIG as SHARED_SMS_CONFIG } from "./smsSender";
++import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, SMS_CONFIG as SHARED_SMS_CONFIG, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
+ 
+ export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
+ export { scanSchoolForConflicts, onStudentWrittenCheckConflicts } from "./conflicts";
+@@ -67,6 +67,7 @@ export const sendSms = onCall(
+     maxInstances:   10,
+     region:         "africa-south1",
+     cors:           true,
++    secrets:        [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID],
+   },
+   async (request: CallableRequest<SendSmsRequest>): Promise<SendSmsResponse> => {
+     if (!request.auth) {
+@@ -187,7 +188,7 @@ export const chargeSmsTopUp = onCall({
+   maxInstances: 10,
+   region: "africa-south1",
+   cors: true,
+-  secrets: [PAYSTACK_SECRET_KEY],
++  secrets: [PAYSTACK_SECRET_KEY, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID],
+ }, async (request: CallableRequest<ChargeSmsTopUpRequest>) => {
+   try {
+     if (!request.auth) {
+diff --git a/functions/src/insufficientTokensRecheck.ts b/functions/src/insufficientTokensRecheck.ts
+index b70418f..bbbefa2 100644
+--- a/functions/src/insufficientTokensRecheck.ts
++++ b/functions/src/insufficientTokensRecheck.ts
+@@ -1,7 +1,7 @@
+ import { onDocumentUpdated } from "firebase-functions/firestore";
+ import * as admin from "firebase-admin";
+ import { ScheduledMessage } from "./scheduleTypes";
+-import { sendHostPinnacleSms } from "./smsSender";
++import { sendHostPinnacleSms, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
+ 
+ if (!admin.apps.length) {
+   admin.initializeApp();
+@@ -30,7 +30,7 @@ async function reserveMore(uid: string, want: number): Promise<number> {
+ }
+ 
+ export const recheckInsufficientSchedulesOnTopUp = onDocumentUpdated(
+-  { document: "users/{uid}", region: "africa-south1", memory: "256MiB", timeoutSeconds: 120 },
++  { document: "users/{uid}", region: "africa-south1", memory: "256MiB", timeoutSeconds: 120, secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID] },
+   async (event) => {
+     const before = event.data?.before.data() as UserDoc | undefined;
+     const after = event.data?.after.data() as UserDoc | undefined;
+diff --git a/functions/src/registerReminders.ts b/functions/src/registerReminders.ts
+index 7806e78..4721e7e 100644
+--- a/functions/src/registerReminders.ts
++++ b/functions/src/registerReminders.ts
+@@ -1,7 +1,7 @@
+ import { onSchedule } from "firebase-functions/scheduler";
+ import * as admin from "firebase-admin";
+ import { isDateBlockedForSchool, todayEAT, BoardingType } from "./kenyanHolidays";
+-import { sendHostPinnacleSms, normalizeSmsPhone } from "./smsSender";
++import { sendHostPinnacleSms, normalizeSmsPhone, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
+ import { getHolidayRangesForDate } from "./holidayLookup";
+ 
+ if (!admin.apps.length) {
+@@ -67,7 +67,7 @@ async function findUnmarkedClassesBySchool(): Promise<Map<string, { school: Scho
+  * "avoid spamming" requirement.
+  */
+ export const registerReminder10am = onSchedule(
+-  { schedule: "0 10 * * *", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300 },
++  { schedule: "0 10 * * *", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300, secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID] },
+   async () => {
+     const bySchool = await findUnmarkedClassesBySchool();
+ 
+diff --git a/functions/src/scheduledMessagesPoller.ts b/functions/src/scheduledMessagesPoller.ts
+index 6c3c135..bcb8079 100644
+--- a/functions/src/scheduledMessagesPoller.ts
++++ b/functions/src/scheduledMessagesPoller.ts
+@@ -5,7 +5,7 @@ import { isDateBlockedForSchool, BoardingType } from "./kenyanHolidays";
+ import { getHolidayRangesForDate } from "./holidayLookup";
+ import { findNextOccurrenceAfter } from "./scheduleCalendar";
+ import { resolveRecipients, ResolvedRecipient } from "./audienceResolver";
+-import { sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText } from "./smsSender";
++import { sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
+ 
+ if (!admin.apps.length) {
+   admin.initializeApp();
+@@ -219,7 +219,7 @@ async function finaliseSchedule(
+ }
+ 
+ export const scheduledMessagesPoller = onSchedule(
+-  { schedule: "every 10 minutes", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300 },
++  { schedule: "every 10 minutes", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300, secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID] },
+   async () => {
+     const nowIso = new Date().toISOString();
+     const dueSnap = await db.collection("scheduledMessages")
+diff --git a/functions/src/smsSender.ts b/functions/src/smsSender.ts
+index b7d2164..61177c8 100644
+--- a/functions/src/smsSender.ts
++++ b/functions/src/smsSender.ts
+@@ -6,13 +6,19 @@
+  */
+ 
+ import axios from "axios";
++import { defineSecret } from "firebase-functions/params";
++
++// HostPinnacle credentials now come from Secret Manager instead of a committed
++// .env file. Any Cloud Function that (transitively) calls sendHostPinnacleSms
++// must list these four in its own `secrets: [...]` array — see index.ts,
++// scheduledMessagesPoller.ts, insufficientTokensRecheck.ts, registerReminders.ts.
++export const HP_SMS_USERID   = defineSecret("HP_SMS_USERID");
++export const HP_SMS_PASSWORD = defineSecret("HP_SMS_PASSWORD");
++export const HP_SMS_APIKEY   = defineSecret("HP_SMS_APIKEY");
++export const HP_SMS_SENDERID = defineSecret("HP_SMS_SENDERID");
+ 
+ export const SMS_CONFIG = {
+   API_URL:    "https://smsportal.hostpinnacle.co.ke/SMSApi/send",
+-  USERID:     process.env.HP_SMS_USERID    || "",
+-  PASSWORD:   process.env.HP_SMS_PASSWORD  || "",
+-  APIKEY:     process.env.HP_SMS_APIKEY    || "",
+-  SENDER_ID:  process.env.HP_SMS_SENDERID  || "",
+   MAX_LENGTH: 400,
+ };
+ 
+@@ -66,18 +72,23 @@ export function containsLink(text: string): boolean {
+ 
+ export async function sendHostPinnacleSms(opts: SmsSendOptions): Promise<SmsSendResult> {
+   try {
+-    if (!SMS_CONFIG.USERID || !SMS_CONFIG.APIKEY) {
++    const userid   = HP_SMS_USERID.value();
++    const password = HP_SMS_PASSWORD.value();
++    const apikey   = HP_SMS_APIKEY.value();
++    const senderId = opts.senderId || HP_SMS_SENDERID.value();
++
++    if (!userid || !apikey) {
+       console.warn("HostPinnacle SMS credentials not configured — skipping SMS.");
+       return { success: false, error: "SMS credentials not configured" };
+     }
+ 
+     const params = new URLSearchParams({
+-      userid:         SMS_CONFIG.USERID,
+-      password:       SMS_CONFIG.PASSWORD,
++      userid,
++      password,
+       sendMethod:     "quick",
+       mobile:         opts.mobile,
+       msg:            opts.message,
+-      senderid:       opts.senderId || SMS_CONFIG.SENDER_ID,
++      senderid:       senderId,
+       msgType:        "text",
+       duplicatecheck: opts.duplicateCheck === false ? "false" : "true",
+       output:         "json",
+@@ -88,7 +99,7 @@ export async function sendHostPinnacleSms(opts: SmsSendOptions): Promise<SmsSend
+       params.toString(),
+       {
+         headers: {
+-          "apikey":       SMS_CONFIG.APIKEY,
++          "apikey":       apikey,
+           "Content-Type": "application/x-www-form-urlencoded",
+         },
+         timeout: 10_000,
+diff --git a/src/firebase.ts b/src/firebase.ts
+index 37e1d90..21c960d 100644
+--- a/src/firebase.ts
++++ b/src/firebase.ts
+@@ -4,7 +4,7 @@ import { getFirestore } from "firebase/firestore";
+ import { getAnalytics } from "firebase/analytics";
+ 
+ const firebaseConfig = {
+-  apiKey: "AIzaSyAQ2m7ywT5UktHvKi7cp1nFd5f_97Tdc28",
++  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+   authDomain: "my-register-728ff.firebaseapp.com",
+   projectId: "my-register-728ff",
+   storageBucket: "my-register-728ff.firebasestorage.app",

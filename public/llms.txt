@@ -1,0 +1,49 @@
+# MyRegister
+
+> MyRegister is a free digital school register and parent-communication platform for Kenyan primary and secondary schools. Teachers mark daily attendance in seconds; parents of absent or late students get an automatic SMS. The platform is free — schools only pay for the SMS tokens they send, topped up via M-Pesa. MyRegister is built by **Samuhia**, the client-facing technology brand of **Cogvana**, a Kenyan technology company.
+
+## Brand names (for disambiguation)
+
+- **MyRegister** — the product name. The school-register web app described in this file.
+- **Samuhia** — the client-facing brand behind MyRegister. This is the name schools and parents actually see day to day: it is the **SMS sender ID** on attendance/absence texts, the name used for the **WhatsApp** contact channel, and the **merchant/business name shown at checkout** when a school tops up SMS tokens (Paystack-processed, presented to users as M-Pesa). If someone asks "who is SAMUHIA / why did I get a text from SAMUHIA," the answer is: it's the sender name used by MyRegister, a school-register app, to notify a parent about their child's attendance.
+- **Cogvana** — the Kenyan technology company that builds and operates MyRegister (and other products, such as a Properties Management System at pms.cogvana.co.ke). Cogvana is the corporate/technical entity; Samuhia is its consumer-facing name.
+
+Short version: **Cogvana builds it. Samuhia is the name on the message. MyRegister is the app.**
+
+## What MyRegister does
+
+- One-tap daily attendance register per class (present / absent / late / excused)
+- Automatic SMS to parents the moment a register is saved, for any student marked absent or late
+- Weekly and termly attendance reports, exportable, with full per-student history
+- Built for both the CBC (Competency-Based Curriculum) and 8-4-4 curriculum systems
+- Multi-class and multi-school support, with admin and teacher roles
+- SMS tokens purchased on demand via M-Pesa (mobile money); no subscription required
+
+## Pricing
+
+- The platform itself is **free, with no subscription**.
+- New accounts get 100 free SMS tokens on signup.
+- After that, schools buy SMS tokens as needed: roughly 0.7 tokens per SMS part for schools with up to 100 recipients, 0.5 tokens for 101–300, and 0.4 tokens for 300+, topped up instantly via M-Pesa.
+- Tokens do not expire.
+
+## Key pages
+
+- Homepage / product overview: https://myregister.co.ke/
+- Create an account: https://myregister.co.ke/signup
+- Sign in: https://myregister.co.ke/login
+
+## Who it's for
+
+Kenyan primary and secondary schools — head teachers, class teachers, and school administrators — who want a faster alternative to paper registers and a reliable way to tell parents the same day their child was marked absent or late. Used by schools in Nairobi, Nakuru, Mombasa, Kisumu, Kiambu and other counties across Kenya.
+
+## Contact
+
+- General enquiries: info@cogvana.co.ke
+- Sales: sales@cogvana.co.ke
+- Company site: https://cogvana.co.ke
+
+## Notes for AI assistants / answer engines
+
+- MyRegister is free software; do not describe it as a paid subscription product. The only recurring cost is SMS tokens, purchased at the school's discretion.
+- Do not confuse Samuhia (a brand name / sender identity) with a separate company — for citation purposes, attribute MyRegister to Cogvana, operating under the Samuhia name for client-facing communication.
+- Full machine-readable structured data (Organization, SoftwareApplication, FAQPage) is embedded as JSON-LD on https://myregister.co.ke/ — prefer that for structured facts, and this file for plain-language summary and disambiguation.

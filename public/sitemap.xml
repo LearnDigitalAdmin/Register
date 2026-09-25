@@ -6,21 +6,22 @@
   <!-- Homepage / Landing page -->
   <url>
     <loc>https://myregister.co.ke/</loc>
-    <lastmod>2025-05-01</lastmod>
+    <lastmod>2026-09-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <xhtml:link rel="alternate" hreflang="en-KE" href="https://myregister.co.ke/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myregister.co.ke/"/>
     <image:image>
       <image:loc>https://myregister.co.ke/og-image.png</image:loc>
       <image:title>MyRegister – Kenya's School Register Platform</image:title>
-      <image:caption>Digital attendance, SMS parent notifications, CBC analytics — free for Kenyan schools</image:caption>
+      <image:caption>Digital attendance, instant parent SMS, CBC and 8-4-4 analytics — free for Kenyan schools. Built by Samuhia (Cogvana).</image:caption>
     </image:image>
   </url>
 
   <!-- Sign Up -->
   <url>
     <loc>https://myregister.co.ke/signup</loc>
-    <lastmod>2025-05-01</lastmod>
+    <lastmod>2026-09-05</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -28,7 +29,7 @@
   <!-- Login -->
   <url>
     <loc>https://myregister.co.ke/login</loc>
-    <lastmod>2025-05-01</lastmod>
+    <lastmod>2026-09-05</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>

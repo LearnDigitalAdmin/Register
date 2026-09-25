@@ -96,11 +96,17 @@ export default function Landing() {
       `}</style>
 
       {/* NAV */}
+      <header>
       <nav className="lp-nav">
-        <div className="lp-logo">MY<span>REGISTER</span></div>
+        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+          <div className="lp-logo">MY<span>REGISTER</span></div>
+          <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,.35)', letterSpacing: 1.5, textTransform: 'uppercase', marginTop: 2 }}>by Samuhia</span>
+        </div>
         <div className="lp-nav-links">
+          <a onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}>How it works</a>
           <a onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}>Features</a>
           <a onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })}>Pricing</a>
+          <a onClick={() => document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' })}>FAQ</a>
           <a onClick={() => document.getElementById('about')?.scrollIntoView({ behavior: 'smooth' })}>About</a>
           <a onClick={() => setShowContact(true)}>Contact</a>
         </div>
@@ -119,8 +125,10 @@ export default function Landing() {
           </button>
         </div>
       </nav>
+      </header>
 
       {/* HERO */}
+      <main>
       <section className="hero-grid">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
@@ -131,7 +139,7 @@ export default function Landing() {
             Kenya's smartest<br /><em style={{ fontStyle: 'normal', color: 'var(--mint)' }}>school register.</em>
           </h1>
           <p className="hero-p">
-            Mark attendance in seconds, notify parents by SMS the moment a child is absent, and keep a full digital record — built for CBC and 8-4-4 classrooms. The platform is free; you only pay for the SMS you send.
+            Mark attendance in under a minute. The instant a child is absent or late, their parent gets an SMS — sent from <strong style={{ color: '#fff', fontWeight: 600 }}>Samuhia</strong>, a name Kenyan parents already trust — with a full digital record behind every entry. Built for CBC and 8-4-4 classrooms. The platform is free; you only pay for the SMS you send.
           </p>
           <div className="hero-btns">
             <button
@@ -201,6 +209,31 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* HOW IT WORKS */}
+      <section id="how-it-works" className="section-pad" style={{ borderTop: 'none' }}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--mint)', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 }}>How it works</div>
+          <h2 className="section-h2">Three steps. No training needed.</h2>
+          <p style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', fontFamily: "'Literata',serif" }}>If a teacher can use WhatsApp, they can use MyRegister.</p>
+        </div>
+        <div className="features-grid">
+          {[
+            { step: '1', title: 'Mark the register', desc: 'Tap present, absent, late or excused for each student. A full class takes under a minute, on a phone or a computer.' },
+            { step: '2', title: 'Samuhia notifies parents', desc: 'The moment you save, an SMS goes out automatically to the parents of any student marked absent or late — sent from Samuhia, so parents know straight away it\u2019s genuine.' },
+            { step: '3', title: 'Reports write themselves', desc: 'Every entry builds a full attendance history, ready to export as a weekly or termly report — no spreadsheets required.' },
+          ].map(s => (
+            <div key={s.step} style={{
+              background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)',
+              borderRadius: 20, padding: '24px 20px',
+            }}>
+              <div style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--mint)', color: 'var(--ink)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, fontWeight: 800, marginBottom: 16 }}>{s.step}</div>
+              <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>{s.title}</h3>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,.5)', lineHeight: 1.7 }}>{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* FEATURES */}
       <section id="features" className="section-pad">
         <div style={{ textAlign: 'center', marginBottom: 40 }}>
@@ -213,7 +246,7 @@ export default function Landing() {
         <div className="features-grid" style={{ marginBottom: 40 }}>
           {[
             { icon: '📋', title: 'One-tap daily register', desc: 'Mark present, absent, late, or excused for a whole class in under a minute, with a weekend- and holiday-aware register so no one has to mark a day that never needed one.' },
-            { icon: '📲', title: 'Instant parent SMS', desc: 'The moment a register is saved, parents of absent or late students get an SMS automatically — no separate step, no forgetting to notify anyone.' },
+            { icon: '📲', title: 'Instant parent SMS', desc: 'The moment a register is saved, parents of absent or late students get an SMS automatically — sent from Samuhia — no separate step, no forgetting to notify anyone.' },
             { icon: '📊', title: 'Reports that write themselves', desc: 'Weekly and termly attendance reports, exportable and ready to hand to a head teacher, with a full history behind every student.' },
           ].map(s => (
             <div key={s.title} style={{
@@ -274,6 +307,9 @@ export default function Landing() {
               Tokens are priced per SMS part per recipient. One SMS = 140 characters.
               A 285-character message counts as 2 SMS parts (140 + 145). Sending that to 10 parents costs 20 tokens.
               Emojis and special characters are automatically stripped. Maximum message length is 400 characters (3 SMS parts).
+            </p>
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', marginTop: 10 }}>
+              Topping up shows as <strong style={{ color: 'var(--mint)' }}>Samuhia</strong> on your M-Pesa prompt — that's us, not a third party.
             </p>
           </div>
           <div>
@@ -360,12 +396,37 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* FAQ */}
+      <section id="faq" className="section-pad">
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--mint)', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 }}>FAQ</div>
+          <h2 className="section-h2">Straight answers.</h2>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 760, margin: '0 auto' }}>
+          {[
+            { q: 'Is MyRegister really free?', a: 'Yes. The whole platform \u2014 attendance, reports, analytics, multiple classes \u2014 is free, with no subscription. The only cost is SMS tokens, and you only buy them when you want to message parents.' },
+            { q: 'Who is Samuhia? Why does an SMS say it\u2019s from Samuhia?', a: 'Samuhia is the name MyRegister sends its SMS under, and the name you\u2019ll see when topping up tokens via M-Pesa. MyRegister is built by Cogvana \u2014 Samuhia is simply the name parents and schools see day to day.' },
+            { q: 'Does it work for CBC and 8-4-4 schools?', a: 'Yes \u2014 registers, attendance history and reports work the same way for both curricula.' },
+            { q: 'How do parents get notified?', a: 'The moment a teacher saves a register, an SMS goes out automatically to the parents of any student marked absent or late. No extra step, nothing to remember.' },
+          ].map(item => (
+            <div key={item.q} style={{
+              background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)',
+              borderRadius: 16, padding: '20px 22px',
+            }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>{item.q}</h3>
+              <p style={{ fontSize: 14, color: 'rgba(255,255,255,.55)', lineHeight: 1.7, fontFamily: "'Literata',serif" }}>{item.a}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      </main>
+
       {/* FOOTER */}
       <footer id="about" className="footer-grid">
         <div className="footer-brand">
           <div className="lp-logo">my<span>register</span></div>
           <p style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', lineHeight: 1.7, marginTop: 12, maxWidth: 260, fontFamily: "'Literata',serif" }}>
-            Kenya's school operations platform. Built for teachers, by people who care about education.
+            Kenya's school operations platform — free to use, with SMS sent under our trusted Samuhia name. Built by Cogvana, for teachers who care about education.
           </p>
           {/* Contact button in footer */}
           <button
@@ -405,7 +466,7 @@ export default function Landing() {
       </footer>
 
       <div className="bottom-bar">
-        <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>© 2025 SAMUHIA BUSINESSES. Made with love in Kenya.</p>
+        <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>© 2026 Cogvana. SMS sent as Samuhia. Made with love in Kenya.</p>
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', margin: 0 }}>Platform free · Pay only for SMS</p>
       </div>
 

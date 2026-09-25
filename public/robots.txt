@@ -1,36 +1,99 @@
-# MyRegister – Kenya School Register Platform
-# Built by Samuhia Businesses / Cogvana
-# https://myregister.co.ke
+# ============================================================================
+# MyRegister — Kenya's School Register & Parent SMS Platform
+# Built by Samuhia (Cogvana) · https://myregister.co.ke
+# ============================================================================
 
-# ── Allow all crawlers ──────────────────────────────────────────────────────
-
+# ── Standard web crawlers ───────────────────────────────────────────────────
 User-agent: *
-
-# Allow full indexing of public-facing pages
 Allow: /
 Allow: /index.html
+Allow: /login
+Allow: /signup
 Allow: /screenshots/
 Allow: /icons/
 Allow: /og-image.png
-Allow: /apple-touch-icon.png
+Allow: /favicon.ico
+Allow: /icon.svg
 
-# Block authenticated app pages (no value to crawlers, require login)
+# Authenticated app — no public SEO value, requires login
 Disallow: /app
 Disallow: /app/
 
-# Block auth pages (low SEO value, these redirect anyway)
-# Note: /login and /signup are kept crawlable so Google can find the CTA
-# Disallow: /login
-# Disallow: /signup
-
-# Block assets that aren't helpful to index
+# Source/build internals — nothing worth indexing
 Disallow: /src/
 Disallow: *.tsx$
 Disallow: *.ts$
 Disallow: /node_modules/
+Disallow: /*.map$
 
-# ── Crawl-delay for polite bots ─────────────────────────────────────────────
 Crawl-delay: 1
 
-# ── Sitemap ─────────────────────────────────────────────────────────────────
+# ── AI assistants & answer-engine crawlers ──────────────────────────────────
+# MyRegister wants to be discoverable and accurately described by AI search
+# and chat assistants (ChatGPT, Claude, Perplexity, Gemini, etc). These bots
+# get the same public-page access as regular search crawlers.
+User-agent: GPTBot
+Allow: /
+Disallow: /app
+
+User-agent: ChatGPT-User
+Allow: /
+Disallow: /app
+
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /app
+
+User-agent: ClaudeBot
+Allow: /
+Disallow: /app
+
+User-agent: Claude-User
+Allow: /
+Disallow: /app
+
+User-agent: Claude-SearchBot
+Allow: /
+Disallow: /app
+
+User-agent: anthropic-ai
+Allow: /
+Disallow: /app
+
+User-agent: PerplexityBot
+Allow: /
+Disallow: /app
+
+User-agent: Perplexity-User
+Allow: /
+Disallow: /app
+
+User-agent: Google-Extended
+Allow: /
+Disallow: /app
+
+User-agent: Applebot
+Allow: /
+Disallow: /app
+
+User-agent: Applebot-Extended
+Allow: /
+Disallow: /app
+
+User-agent: Bingbot
+Allow: /
+Disallow: /app
+
+User-agent: meta-externalagent
+Allow: /
+Disallow: /app
+
+User-agent: Amazonbot
+Allow: /
+Disallow: /app
+
+# ── Machine-readable summary for LLMs (see /llms.txt) ───────────────────────
+# https://myregister.co.ke/llms.txt
+
+# ── Sitemap ──────────────────────────────────────────────────────────────────
 Sitemap: https://myregister.co.ke/sitemap.xml
