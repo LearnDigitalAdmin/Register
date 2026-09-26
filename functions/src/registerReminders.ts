@@ -1,7 +1,7 @@
 import { onSchedule } from "firebase-functions/scheduler";
 import * as admin from "firebase-admin";
 import { isDateBlockedForSchool, todayEAT, BoardingType } from "./kenyanHolidays";
-import { sendHostPinnacleSms, normalizeSmsPhone } from "./smsSender";
+import { sendHostPinnacleSms, normalizeSmsPhone, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
 import { getHolidayRangesForDate } from "./holidayLookup";
 
 if (!admin.apps.length) {
@@ -67,7 +67,7 @@ async function findUnmarkedClassesBySchool(): Promise<Map<string, { school: Scho
  * "avoid spamming" requirement.
  */
 export const registerReminder10am = onSchedule(
-  { schedule: "0 10 * * *", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300 },
+  { schedule: "0 10 * * *", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300, secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID] },
   async () => {
     const bySchool = await findUnmarkedClassesBySchool();
 

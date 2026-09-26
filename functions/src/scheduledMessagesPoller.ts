@@ -5,7 +5,7 @@ import { isDateBlockedForSchool, BoardingType } from "./kenyanHolidays";
 import { getHolidayRangesForDate } from "./holidayLookup";
 import { findNextOccurrenceAfter } from "./scheduleCalendar";
 import { resolveRecipients, ResolvedRecipient } from "./audienceResolver";
-import { sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText } from "./smsSender";
+import { sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -219,7 +219,7 @@ async function finaliseSchedule(
 }
 
 export const scheduledMessagesPoller = onSchedule(
-  { schedule: "every 10 minutes", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300 },
+  { schedule: "every 10 minutes", timeZone: "Africa/Nairobi", region: "europe-west1", memory: "256MiB", timeoutSeconds: 300, secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID] },
   async () => {
     const nowIso = new Date().toISOString();
     const dueSnap = await db.collection("scheduledMessages")

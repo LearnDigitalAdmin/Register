@@ -1,7 +1,7 @@
 import { onDocumentUpdated } from "firebase-functions/firestore";
 import * as admin from "firebase-admin";
 import { ScheduledMessage } from "./scheduleTypes";
-import { sendHostPinnacleSms } from "./smsSender";
+import { sendHostPinnacleSms, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -30,7 +30,7 @@ async function reserveMore(uid: string, want: number): Promise<number> {
 }
 
 export const recheckInsufficientSchedulesOnTopUp = onDocumentUpdated(
-  { document: "users/{uid}", region: "africa-south1", memory: "256MiB", timeoutSeconds: 120 },
+  { document: "users/{uid}", region: "africa-south1", memory: "256MiB", timeoutSeconds: 120, secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID] },
   async (event) => {
     const before = event.data?.before.data() as UserDoc | undefined;
     const after = event.data?.after.data() as UserDoc | undefined;

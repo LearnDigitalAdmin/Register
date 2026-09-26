@@ -6,13 +6,19 @@
  */
 
 import axios from "axios";
+import { defineSecret } from "firebase-functions/params";
+
+// HostPinnacle credentials now come from Secret Manager instead of a committed
+// .env file. Any Cloud Function that (transitively) calls sendHostPinnacleSms
+// must list these four in its own `secrets: [...]` array — see index.ts,
+// scheduledMessagesPoller.ts, insufficientTokensRecheck.ts, registerReminders.ts.
+export const HP_SMS_USERID   = defineSecret("HP_SMS_USERID");
+export const HP_SMS_PASSWORD = defineSecret("HP_SMS_PASSWORD");
+export const HP_SMS_APIKEY   = defineSecret("HP_SMS_APIKEY");
+export const HP_SMS_SENDERID = defineSecret("HP_SMS_SENDERID");
 
 export const SMS_CONFIG = {
   API_URL:    "https://smsportal.hostpinnacle.co.ke/SMSApi/send",
-  USERID:     process.env.HP_SMS_USERID    || "",
-  PASSWORD:   process.env.HP_SMS_PASSWORD  || "",
-  APIKEY:     process.env.HP_SMS_APIKEY    || "",
-  SENDER_ID:  process.env.HP_SMS_SENDERID  || "",
   MAX_LENGTH: 400,
 };
 
@@ -66,18 +72,23 @@ export function containsLink(text: string): boolean {
 
 export async function sendHostPinnacleSms(opts: SmsSendOptions): Promise<SmsSendResult> {
   try {
-    if (!SMS_CONFIG.USERID || !SMS_CONFIG.APIKEY) {
+    const userid   = HP_SMS_USERID.value();
+    const password = HP_SMS_PASSWORD.value();
+    const apikey   = HP_SMS_APIKEY.value();
+    const senderId = opts.senderId || HP_SMS_SENDERID.value();
+
+    if (!userid || !apikey) {
       console.warn("HostPinnacle SMS credentials not configured — skipping SMS.");
       return { success: false, error: "SMS credentials not configured" };
     }
 
     const params = new URLSearchParams({
-      userid:         SMS_CONFIG.USERID,
-      password:       SMS_CONFIG.PASSWORD,
+      userid,
+      password,
       sendMethod:     "quick",
       mobile:         opts.mobile,
       msg:            opts.message,
-      senderid:       opts.senderId || SMS_CONFIG.SENDER_ID,
+      senderid:       senderId,
       msgType:        "text",
       duplicatecheck: opts.duplicateCheck === false ? "false" : "true",
       output:         "json",
@@ -88,7 +99,7 @@ export async function sendHostPinnacleSms(opts: SmsSendOptions): Promise<SmsSend
       params.toString(),
       {
         headers: {
-          "apikey":       SMS_CONFIG.APIKEY,
+          "apikey":       apikey,
           "Content-Type": "application/x-www-form-urlencoded",
         },
         timeout: 10_000,

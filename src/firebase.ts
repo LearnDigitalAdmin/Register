@@ -4,7 +4,7 @@ import { getFirestore } from "firebase/firestore";
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAQ2m7ywT5UktHvKi7cp1nFd5f_97Tdc28",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: "my-register-728ff.firebaseapp.com",
   projectId: "my-register-728ff",
   storageBucket: "my-register-728ff.firebasestorage.app",

@@ -2,7 +2,7 @@ import { onCall, CallableRequest, HttpsError } from "firebase-functions/https";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import axios from "axios";
-import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, SMS_CONFIG as SHARED_SMS_CONFIG } from "./smsSender";
+import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
 
 export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
 export { scanSchoolForConflicts, onStudentWrittenCheckConflicts } from "./conflicts";
@@ -25,10 +25,9 @@ const PAYSTACK_API_BASE = "https://api.paystack.co";
 
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-// SMS_CONFIG, sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText, and containsLink now
+// sendHostPinnacleSms, normalizeSmsPhone, sanitizeSmsText, and containsLink now
 // live in ./smsSender.ts (shared with registerReminders.ts and scheduledMessagesPoller.ts).
 // Local aliases below keep the rest of this file's code unchanged.
-const SMS_CONFIG = SHARED_SMS_CONFIG;
 const normalizeSmsPhone = sharedNormalizeSmsPhone;
 const sanitizeSmsText = sharedSanitizeSmsText;
 const containsLink = sharedContainsLink;
@@ -67,6 +66,7 @@ export const sendSms = onCall(
     maxInstances:   10,
     region:         "africa-south1",
     cors:           true,
+    secrets:        [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID],
   },
   async (request: CallableRequest<SendSmsRequest>): Promise<SendSmsResponse> => {
     if (!request.auth) {
@@ -109,7 +109,7 @@ export const sendSms = onCall(
       phones:         normalizedPhones,
       recipientCount: normalizedPhones.length,
       message:        sanitizedMessage,
-      senderId:       senderId || SMS_CONFIG.SENDER_ID,
+      senderId:       senderId || HP_SMS_SENDERID.value(),
       status:         "pending",
       createdAt:      admin.firestore.FieldValue.serverTimestamp(),
       updatedAt:      admin.firestore.FieldValue.serverTimestamp(),
@@ -187,7 +187,7 @@ export const chargeSmsTopUp = onCall({
   maxInstances: 10,
   region: "africa-south1",
   cors: true,
-  secrets: [PAYSTACK_SECRET_KEY],
+  secrets: [PAYSTACK_SECRET_KEY, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID],
 }, async (request: CallableRequest<ChargeSmsTopUpRequest>) => {
   try {
     if (!request.auth) {
