@@ -225,11 +225,9 @@ export interface Student {
   archived?: boolean;           // true once graduated into the global archivedStudents collection
 }
 
-/** Admission numbers may be teacher-entered (letters + numbers, e.g. "ADM-2026-014") or
- * left blank to auto-generate. Normalised to uppercase with internal whitespace removed. */
-export function normaliseAdmissionNo(raw: string): string {
-  return raw.trim().toUpperCase().replace(/\s+/g, '');
-}
+/** Admission-number normalisation lives in `src/shared/importValidation.ts` (shared with Cloud Functions). */
+import { normaliseAdmissionNo } from './shared/importValidation';
+export { normaliseAdmissionNo };
 
 export function isValidAdmissionNo(raw: string): boolean {
   const v = normaliseAdmissionNo(raw);
@@ -417,22 +415,13 @@ export interface ArchivedStudent {
 
 // ─── Bulk student import ────────────────────────────────────────────────────
 
-/** Canonical field keys the importer can map spreadsheet columns onto. */
-export type ImportFieldKey =
-  | 'admissionNo'
-  | 'name'
-  | 'classCode'
-  | 'streamCode'
-  | 'parentName'
-  | 'parentPhone'
-  | 'parentWhatsApp'
-  | 'nationalId'
-  | 'upiNumber';
-
-/** Which import fields are mandatory vs optional (before scope is taken into account —
- * see `requiredFieldsMapped`, which is scope-aware). */
-export const IMPORT_REQUIRED_FIELDS: ImportFieldKey[] = ['admissionNo', 'name', 'classCode'];
-export const IMPORT_OPTIONAL_FIELDS: ImportFieldKey[] = ['streamCode', 'parentName', 'parentPhone', 'parentWhatsApp', 'nationalId', 'upiNumber'];
+// The field keys, required/optional lists, scope and row/issue types are defined in `src/shared/importValidation.ts`
+// (no imports, copied byte-for-byte into Cloud Functions) and re-exported here so existing imports keep working.
+import type { ImportFieldKey } from './shared/importValidation';
+export type {
+  ImportFieldKey, ImportScope, ImportRowIssueType, ImportRowIssue, ImportRow,
+} from './shared/importValidation';
+export { IMPORT_REQUIRED_FIELDS, IMPORT_OPTIONAL_FIELDS } from './shared/importValidation';
 
 export const IMPORT_FIELD_LABELS: Record<ImportFieldKey, string> = {
   admissionNo:    'Admission No.',
@@ -445,14 +434,6 @@ export const IMPORT_FIELD_LABELS: Record<ImportFieldKey, string> = {
   nationalId:     'National ID / Birth Cert No.',
   upiNumber:      'UPI / NEMIS No.',
 };
-
-/**
- * Whole-school imports read the class (and optionally stream) from the file and resolve them
- * against the school's class structure for every row. Single-class imports force every row into
- * one admin/teacher-chosen class and ignore any class/stream column entirely — this is the
- * default, safer mode, since it can't accidentally scatter students across the wrong classes.
- */
-export type ImportScope = 'singleClass' | 'wholeSchool';
 
 /** A saved column-mapping preset for a school, so the next import remembers it. */
 export interface ImportColumnMapping {
@@ -468,37 +449,6 @@ export interface ImportColumnMapping {
    */
   customFieldAliases?: Partial<Record<ImportFieldKey, string[]>>;
   updatedAt: string;
-}
-
-export type ImportRowIssueType =
-  | 'missing_admission_no'
-  | 'missing_name'
-  | 'invalid_phone'
-  | 'duplicate_admission_no'
-  | 'duplicate_student'
-  | 'unknown_class'
-  | 'invalid_stream'
-  | 'unknown_academic_year';
-
-export interface ImportRowIssue {
-  type: ImportRowIssueType;
-  field?: ImportFieldKey;
-  message: string;
-}
-
-/** One parsed spreadsheet row, carried through mapping → validation → import. */
-export interface ImportRow {
-  rowIndex: number;            // 1-based row number in the source file (excluding header)
-  values: Partial<Record<ImportFieldKey, string>>;
-  /** The canonical class code this row will actually be written with, once resolved —
-   * either the extraction engine's result (wholeSchool scope) or the forced target class
-   * (singleClass scope). Never derived from `values.classCode` directly at import time. */
-  resolvedClassCode?: string;
-  issues: ImportRowIssue[];
-  /** True once the row has no blocking issues and is ready to import. */
-  isValid: boolean;
-  /** User chose to skip this row even if it's otherwise valid. */
-  excluded?: boolean;
 }
 
 export interface ImportSummary {

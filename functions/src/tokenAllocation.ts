@@ -2,6 +2,10 @@ import { onCall, CallableRequest, HttpsError } from "firebase-functions/https";
 import * as admin from "firebase-admin";
 import { TeacherTokenAllocation } from "./scheduleTypes";
 
+// Free signup allowance: 50 tokens per SCHOOL (the registering school admin), none per teacher. The rule is shared
+// byte-for-byte with the app (src/shared/freeTokens.ts) and only decides what a brand-new account starts with.
+export { FREE_TOKENS_PER_SCHOOL, signupFreeTokens } from "./shared/freeTokens";
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }

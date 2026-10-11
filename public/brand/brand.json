@@ -1,0 +1,12 @@
+{
+  "key": "myregister",
+  "name": "MyRegister",
+  "descriptor": "SCHOOL REGISTERS",
+  "primary": "#B23A48",
+  "accent": "#D9993A",
+  "darkPrimary": "#B23A48",
+  "tile": "#B23A48",
+  "themeColor": "#B23A48",
+  "backgroundColor": "#B23A48",
+  "source": "samuhia-site-logo-studio.html"
+}

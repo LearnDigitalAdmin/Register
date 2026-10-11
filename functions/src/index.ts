@@ -300,3 +300,7 @@ export const chargeSmsTopUp = onCall({
     throw new HttpsError("internal", `Failed to charge: ${error.response?.data?.message || error.message}`);
   }
 });
+
+export { addSupportAgent, removeSupportAgent, listSupportAgents } from "./supportAgents";
+export { createDeskRequest, listDeskRequests } from "./deskRequests";
+export { deskdelegate } from "./deskDelegate";

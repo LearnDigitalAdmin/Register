@@ -9,10 +9,17 @@
     "rootDir": "src",
     "sourceMap": true,
     "strict": true,
-    "target": "es2017"
+    "target": "es2017",
+    "lib": [
+      "es2022"
+    ]
   },
   "compileOnSave": true,
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/testing/**"
   ]
 }

@@ -13,6 +13,7 @@ import type { UserProfile, Curriculum, StreamMode, BoardingType, SchoolLevel, Te
 import { createAcademicSetup, isKnecCodeTaken, isValidKnecCode, normaliseKnecCode } from './services/academicYearService';
 import { assignmentId, getTeachersForClass } from './services/teacherAssignmentService';
 import { isSafaricomPhone } from './utils/phoneValidation';
+import { signupFreeTokens } from './shared/freeTokens';
 
 interface AuthContextType {
   user: User | null;
@@ -186,7 +187,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       schoolName,
       ...(classCode ? { classCode, assignedClasses: [classCode], lastActiveClass: classCode } : {}),
       createdAt:     new Date().toISOString(),
-      messageTokens: 100,
+      // Free allowance is per school: only the account that registers the school receives it (see shared/freeTokens.ts).
+      messageTokens: signupFreeTokens(role),
     };
 
     await setDoc(doc(db, 'users', cred.user.uid), profile);

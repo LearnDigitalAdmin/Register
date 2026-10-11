@@ -45,6 +45,8 @@ import ConflictsPanel from '../components/ConflictsPanel';
 import { getConflicts } from '../services/conflictsService';
 import ScheduledMessagesPanel from '../components/ScheduledMessagesPanel';
 import HolidaySettingsPanel from '../components/HolidaySettingsPanel';
+import SupportAgentsPanel from '../components/SupportAgentsPanel';
+import DeskRequestsPanel from '../components/DeskRequestsPanel';
 import TeacherTokenAllocationModal from '../components/TeacherTokenAllocationModal';
 
 
@@ -53,7 +55,7 @@ const STATUS_LABEL: Record<AttendanceStatus, string> = { present: 'P', absent: '
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings' | 'academicYears' | 'scheduling';
+type Panel = 'overview' | 'register' | 'students' | 'messages' | 'logs' | 'reports' | 'settings' | 'academicYears' | 'scheduling' | 'deskRequests';
 
 // ─── Compose box with live full-message preview ───────────────────────────────
 function SmsComposeBox({
@@ -263,6 +265,7 @@ function MobileDrawerNav({
     { id: 'logs',      icon: '🗂️', label: 'Msg Logs' },
     { id: 'reports',   icon: '📊', label: 'Reports' },
     { id: 'academicYears', icon: '🎓', label: 'Academic Years', adminOnly: true },
+    { id: 'deskRequests', icon: '🛟', label: 'Desk requests', adminOnly: true },
     { id: 'settings',  icon: '⚙️', label: 'Settings', adminOnly: true },
   ];
 
@@ -271,12 +274,12 @@ function MobileDrawerNav({
   const PANEL_LABEL: Record<Panel, string> = {
     overview: 'Overview', register: "Today's Register", students: 'Students',
     messages: 'Send SMS', logs: 'Message Logs', reports: 'Reports', settings: 'Settings',
-    academicYears: 'Academic Years', scheduling: 'Scheduling',
+    academicYears: 'Academic Years', scheduling: 'Scheduling', deskRequests: 'Desk requests',
   };
   const PANEL_ICON: Record<Panel, string> = {
     overview: '🏠', register: '📋', students: '👥',
     messages: '💬', logs: '🗂️', reports: '📊', settings: '⚙️',
-    academicYears: '📅', scheduling: '⏰',
+    academicYears: '📅', scheduling: '⏰', deskRequests: '🛟',
   };
 
   function navigate(id: Panel) { setPanel(id); setOpen(false); }
@@ -893,6 +896,7 @@ export default function AppDashboard() {
     { id: 'logs',      icon: '🗂️', label: 'Message Logs' },
     { id: 'reports',   icon: '📊', label: 'Reports' },
     { id: 'academicYears', icon: '🎓', label: 'Academic Years', adminOnly: true },
+    { id: 'deskRequests', icon: '🛟', label: 'Desk requests', adminOnly: true },
     { id: 'settings',  icon: '⚙️', label: 'Settings', adminOnly: true },
   ];
 
@@ -1784,6 +1788,16 @@ export default function AppDashboard() {
           </>
         )}
 
+        {/* ── DESK REQUESTS ─────────────────────────────────────────────── */}
+        {panel === 'deskRequests' && isAdmin && (
+          <>
+            <div className="page-header"><div><div className="page-title">Desk requests</div><div className="page-sub">Ask the support team for help and read their replies</div></div></div>
+            <div className="page-body">
+              <DeskRequestsPanel toast={toast} />
+            </div>
+          </>
+        )}
+
         {/* ── ACADEMIC YEARS ────────────────────────────────────────────── */}
         {panel === 'academicYears' && isAdmin && (
           <>
@@ -1873,6 +1887,11 @@ export default function AppDashboard() {
                   </div>
                 </div>
               </div>
+              {isAdmin && (
+                <div style={{ marginTop: 24 }}>
+                  <SupportAgentsPanel toast={toast} />
+                </div>
+              )}
               {isAdmin && (
                 <div style={{ marginTop: 24 }}>
                   <HolidaySettingsPanel schoolId={schoolId} currentUserUid={userProfile.uid} toast={toast} />

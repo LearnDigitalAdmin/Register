@@ -15,6 +15,7 @@ import {
 } from '../types';
 import { getClassStructure, getSchoolBasicInfo, resolveLevels } from '../services/academicYearService';
 import { isSafaricomPhone } from '../utils/phoneValidation';
+import { FREE_TOKENS_PER_SCHOOL } from '../shared/freeTokens';
 
 export interface SignupPayload {
   email: string; phone: string; password: string; displayName: string;
@@ -472,7 +473,9 @@ export default function SignupWizard({ signUp, onSuccess, onSwitchToLogin }: Pro
           </div>
 
           <div style={{ background: 'rgba(0,200,150,.07)', border: '1px solid rgba(0,200,150,.15)', borderRadius: 10, padding: 12, fontSize: 12, color: 'rgba(255,255,255,.5)', marginBottom: 16, lineHeight: 1.6 }}>
-            🎁 <strong style={{ color: 'rgba(255,255,255,.7)' }}>100 free message tokens</strong> on signup. The platform is free forever — tokens are only for WhatsApp/SMS parent notifications.
+            {suRole === 'schoolAdmin'
+              ? <>🎁 <strong style={{ color: 'rgba(255,255,255,.7)' }}>{FREE_TOKENS_PER_SCHOOL} free message tokens</strong> for your school. The platform is free forever — tokens are only for SMS parent notifications.</>
+              : <>🎁 Your school admin holds the school's {FREE_TOKENS_PER_SCHOOL} free message tokens and can share some with you. The platform is free forever — tokens are only for SMS parent notifications.</>}
           </div>
         </>
       )}

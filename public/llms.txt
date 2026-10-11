@@ -22,7 +22,7 @@ Short version: **Cogvana builds it. Samuhia is the name on the message. MyRegist
 ## Pricing
 
 - The platform itself is **free, with no subscription**.
-- New accounts get 100 free SMS tokens on signup.
+- Each school gets 50 free SMS tokens when it registers (held by the school admin, who can share them with teachers).
 - After that, schools buy SMS tokens as needed: roughly 0.7 tokens per SMS part for schools with up to 100 recipients, 0.5 tokens for 101–300, and 0.4 tokens for 300+, topped up instantly via M-Pesa.
 - Tokens do not expire.
 

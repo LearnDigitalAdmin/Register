@@ -71,6 +71,29 @@ service cloud.firestore {
 
 ---
 
+## Support desk integration (`deskdelegate`, Support Agents, Desk requests)
+
+New Cloud Functions (region `africa-south1`): `addSupportAgent`, `removeSupportAgent`, `listSupportAgents`,
+`createDeskRequest`, `listDeskRequests` (callables, school admin only) and `deskdelegate` (HTTPS, **private**).
+
+Register never calls the desk. The desk reads this project's `desk_requests` collection and calls `deskdelegate`.
+
+1. **Deploy**: `firebase deploy --only functions`.
+2. **Let the desk call `deskdelegate`** (Cloud Run IAM; no public access). Grant the desk's service account the invoker role:
+   ```bash
+   gcloud run services add-iam-policy-binding deskdelegate \
+     --region=africa-south1 --project=<REGISTER_PROJECT> \
+     --member=serviceAccount:<DESK_SERVICE_ACCOUNT> --role=roles/run.invoker
+   ```
+   Check it is private: `curl -i https://<deskdelegate-url>` must return **403**.
+3. **Let the desk read `desk_requests`**: grant the same account `roles/datastore.viewer` (read) and write access
+   only if it should write `deskStatus`/`responses` back (`roles/datastore.user`).
+4. **Exports** (`export_data`, `run_report`) upload a CSV under `desk-exports/<school>/<uuid>/` and return a 15-minute signed URL.
+   Signing needs the function's service account to hold `roles/iam.serviceAccountTokenCreator` on itself.
+   Add a bucket lifecycle rule that deletes objects with prefix `desk-exports/` after 1 day.
+5. **SMS secrets**: `deskdelegate` uses the existing `HP_SMS_*` secrets.
+6. Audit rows are in `desk_audit` (counts only, never phone numbers or message text).
+
 ## How Login Works
 - Users sign up with **both email AND phone**
 - Phone is stored in a `phone_index` collection mapping `+2547xx...` → email
@@ -79,7 +102,7 @@ service cloud.firestore {
 
 ## Token System
 - Platform is **100% free**
-- New accounts get **100 free tokens**
+- Each school gets **50 free tokens** when its admin registers it (teachers joining a school start with 0; the admin can share tokens with them). Existing balances are unchanged.
 - 1 token = 1 message send (to all parents in selected group)
 - Top up via M-Pesa (integration point for Africa's Talking / M-Pesa API)
 

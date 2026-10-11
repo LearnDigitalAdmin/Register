@@ -27,7 +27,7 @@ const WRAPPER_PADDING_CHARS = 45;
  * so any payload built from a type with optional fields — linkedHolidayPeriodId, classCode,
  * endDate, recipientUids, recipientStudentIds, holidayNoticeVariant, etc. — must be run
  * through this before .set()/.update()/.create() rather than patching one field at a time. */
-function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
+export function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value === undefined) continue;
@@ -87,7 +87,7 @@ async function resolveFundingSourceUid(
   return (schoolSnap.data() as SchoolDoc).adminUid;
 }
 
-interface ScheduleCore {
+export interface ScheduleCore {
   schoolId: string;
   audienceType: ScheduleAudienceType;
   classCode?: string;
@@ -106,7 +106,7 @@ interface ScheduleCore {
 /** Shared plan step: validates dates, resolves recipient count, computes occurrences,
  * cost, and the first nextRunAt. Used by both create and edit (edit re-plans the remaining
  * portion of an existing schedule). Does NOT touch Firestore token balances. */
-async function planSchedule(core: ScheduleCore) {
+export async function planSchedule(core: ScheduleCore) {
   if (core.frequency !== "once" && !core.endDate) {
     throw new HttpsError("invalid-argument", "endDate is required for daily/weekly schedules.");
   }

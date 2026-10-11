@@ -66,43 +66,27 @@ import { KES_RATE_PER_TOKEN } from '../types';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 
-/** "2025-01-27" → Date (local) */
-function ymdToDate(ymd: string): Date {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-/** Date → "YYYY-MM-DD" */
-function dateToYmd(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+// The report maths (grouping, rates, roster merge, week bounds, CSV rows) lives in `src/shared/reportBuilders.ts`,
+// which is copied byte-for-byte into Cloud Functions so the Samuhia Desk delegate produces identical reports.
+// This module only fetches (web SDK) and hands the raw records to the builders.
+import {
+  buildTermlyReport, buildWeeklySummary, isCurrentReportingWindow, weekBounds, ymdToDate, dateToYmd,
+  termlyCsvRows, weeklyCsvRows,
+} from '../shared/reportBuilders';
+import type {
+  RawAttendanceRecord, RawStudent, RawRegister,
+  TermlyStudentRow, TermlyClassSummary, TermlyReport,
+  WeeklyDayRow, WeeklyClassSummary, WeeklySummary,
+} from '../shared/reportBuilders';
+export type {
+  RawAttendanceRecord, RawStudent, RawRegister,
+  TermlyStudentRow, TermlyClassSummary, TermlyReport,
+  WeeklyDayRow, WeeklyClassSummary, WeeklySummary,
+};
 
 /** Today, as "YYYY-MM-DD" in the same format every date in this file uses. */
 function todayYmd(): string {
   return dateToYmd(new Date());
-}
-
-/**
- * A reporting window "is current" when it includes (or extends past) today —
- * i.e. the term/period hasn't fully concluded yet. Only current windows get
- * the live-roster merge described in the module doc comment above; a report
- * for a term that's already over should reflect history as it stood, not
- * today's roster.
- */
-function isCurrentReportingWindow(endDate: string): boolean {
-  return endDate >= todayYmd();
-}
-
-/** Week boundaries (Mon–Sun) containing a date */
-function weekBounds(d: Date): { start: string; end: string } {
-  const copy = new Date(d);
-  const day  = copy.getDay(); // 0=Sun
-  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-  copy.setDate(copy.getDate() + diff);
-  const start = dateToYmd(copy);
-  copy.setDate(copy.getDate() + 6);
-  const end = dateToYmd(copy);
-  return { start, end };
 }
 
 /**
@@ -139,48 +123,7 @@ async function getActiveRoster(schoolId: string, classCodeFilter?: string): Prom
 }
 
 // ─── Raw Firestore types ───────────────────────────────────────────────────────
-
-export interface RawAttendanceRecord {
-  studentId:   string;
-  studentName: string;
-  admissionNo: string;
-  date:        string; // "YYYY-MM-DD"
-  classCode:   string;
-  schoolId:    string;
-  status:      AttendanceStatus;
-  note:        string;
-  savedBy:     string;
-  savedAt:     string;
-  locked:      boolean;
-  enrolmentId?:    string;
-  academicYearId?: string;
-}
-
-export interface RawStudent {
-  id:           string;
-  name:         string;
-  admissionNo:  string;
-  classCode:    string;
-  schoolId:     string;
-  parentName:   string;
-  parentPhone:  string;
-  createdAt:    string;
-}
-
-export interface RawRegister {
-  date:      string;
-  classCode: string;
-  schoolId:  string;
-  savedBy:   string;
-  savedAt:   string;
-  locked:    boolean;
-  present:   number;
-  absent:    number;
-  late:      number;
-  excused:   number;
-  total:     number;
-  academicYearId?: string;
-}
+// (RawAttendanceRecord, RawStudent and RawRegister are re-exported from the shared builders above.)
 
 export interface RawMessage {
   id:             string;
@@ -203,72 +146,7 @@ export interface RawMessage {
 }
 
 // ─── Report output types ───────────────────────────────────────────────────────
-
-/** Per-student row in the termly report */
-export interface TermlyStudentRow {
-  studentId:    string;
-  studentName:  string;
-  admissionNo:  string;
-  classCode:    string;
-  totalDays:    number; // school days in term with a register that this student had the chance to be marked in
-  present:      number;
-  absent:       number;
-  late:         number;
-  excused:      number;
-  rate:         number; // percentage (present / totalDays * 100), 0 when totalDays is 0
-}
-
-export interface TermlyClassSummary {
-  classCode:    string;
-  totalDays:    number;
-  avgRate:      number;
-  students:     TermlyStudentRow[];
-}
-
-export interface TermlyReport {
-  schoolId:     string;
-  schoolName:   string;
-  termLabel:    string;
-  startDate:    string;
-  endDate:      string;
-  generatedAt:  string;
-  totalStudents: number;
-  overallRate:   number;
-  classes:      TermlyClassSummary[];
-  /** Chronic absentees — rate < threshold (only among students with at least one tracked day) */
-  chronicAbsentees: TermlyStudentRow[];
-}
-
-/** One day in the weekly summary */
-export interface WeeklyDayRow {
-  date:       string; // "YYYY-MM-DD"
-  dayName:    string; // "Monday"
-  present:    number;
-  absent:     number;
-  late:       number;
-  excused:    number;
-  total:      number;
-  rate:       number;
-  hasRegister: boolean;
-}
-
-export interface WeeklyClassSummary {
-  classCode: string;
-  days:      WeeklyDayRow[];
-  avgRate:   number;
-  totalPresent: number;
-  totalAbsent:  number;
-}
-
-export interface WeeklySummary {
-  schoolId:    string;
-  schoolName:  string;
-  weekStart:   string;
-  weekEnd:     string;
-  generatedAt: string;
-  classes:     WeeklyClassSummary[];
-  overallRate: number;
-}
+// (Termly*/Weekly* types are re-exported from the shared builders above.)
 
 /** Single day entry in a student profile */
 export interface StudentAttendanceDay {
@@ -348,145 +226,19 @@ export async function generateTermlyReport(
     getKnownClassCodes(schoolId),
   ]);
 
-  let records = attSnap.docs.map(d => d.data() as RawAttendanceRecord);
-  if (academicYearId) {
-    records = records.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
-  }
-  if (classCodeFilter) {
-    records = records.filter(r => r.classCode === classCodeFilter);
-  }
-  if (knownClassCodes) {
-    records = records.filter(r => knownClassCodes.has(r.classCode));
-  }
+  // Live roster merge — only for a window that includes today (see the shared builder's doc comment).
+  const roster = isCurrentReportingWindow(endDate, todayYmd())
+    ? await getActiveRoster(schoolId, classCodeFilter)
+    : [];
 
-  let regDocs = regSnap.docs.map(d => d.data() as RawRegister);
-  if (academicYearId) {
-    regDocs = regDocs.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
-  }
-  if (classCodeFilter) {
-    regDocs = regDocs.filter(r => r.classCode === classCodeFilter);
-  }
-  if (knownClassCodes) {
-    regDocs = regDocs.filter(r => knownClassCodes.has(r.classCode));
-  }
-
-  // Group attendance records by classCode → studentId
-  const byClass: Record<string, Record<string, RawAttendanceRecord[]>> = {};
-  for (const rec of records) {
-    if (!byClass[rec.classCode]) byClass[rec.classCode] = {};
-    if (!byClass[rec.classCode][rec.studentId]) byClass[rec.classCode][rec.studentId] = [];
-    byClass[rec.classCode][rec.studentId].push(rec);
-  }
-
-  // Live roster merge — only for a window that includes today (see module doc comment).
-  const rosterByClass: Record<string, Student[]> = {};
-  if (isCurrentReportingWindow(endDate)) {
-    const roster = await getActiveRoster(schoolId, classCodeFilter);
-    for (const s of roster) {
-      if (knownClassCodes && !knownClassCodes.has(s.classCode)) continue;
-      if (!rosterByClass[s.classCode]) rosterByClass[s.classCode] = [];
-      rosterByClass[s.classCode].push(s);
-    }
-  }
-
-  const allClassCodes = new Set<string>([...Object.keys(byClass), ...Object.keys(rosterByClass)]);
-
-  const classes: TermlyClassSummary[] = [];
-  const allStudentRows: TermlyStudentRow[] = [];
-
-  for (const classCode of allClassCodes) {
-    const studentMap = byClass[classCode] || {};
-
-    // Count distinct register days for this class
-    const classDays = regDocs
-      .filter(r => r.classCode === classCode)
-      .map(r => r.date);
-    const totalDays = new Set(classDays).size;
-
-    const trackedRows: TermlyStudentRow[] = Object.entries(studentMap).map(
-      ([studentId, recs]) => {
-        const present = recs.filter(r => r.status === 'present').length;
-        const absent  = recs.filter(r => r.status === 'absent').length;
-        const late    = recs.filter(r => r.status === 'late').length;
-        const excused = recs.filter(r => r.status === 'excused').length;
-        const rate    = totalDays > 0 ? Math.round((present / totalDays) * 100) : 0;
-        return {
-          studentId,
-          studentName: recs[0].studentName,
-          admissionNo: recs[0].admissionNo,
-          classCode,
-          totalDays,
-          present,
-          absent,
-          late,
-          excused,
-          rate,
-        };
-      },
-    );
-
-    // Roster students with zero attendance records yet this window (e.g. added today, before
-    // their first register) — shown with 0 tracked days rather than a fabricated 0% rate.
-    const trackedIds = new Set(trackedRows.map(r => r.studentId));
-    const untrackedRows: TermlyStudentRow[] = (rosterByClass[classCode] || [])
-      .filter(s => !trackedIds.has(s.id))
-      .map(s => ({
-        studentId: s.id,
-        studentName: s.name,
-        admissionNo: s.admissionNo,
-        classCode,
-        totalDays: 0,
-        present: 0,
-        absent: 0,
-        late: 0,
-        excused: 0,
-        rate: 0,
-      }));
-
-    const studentRows = [...trackedRows, ...untrackedRows]
-      .sort((a, b) => a.studentName.localeCompare(b.studentName));
-
-    // Rate average only over students who've actually had at least one tracked day — a brand
-    // new student with 0 tracked days shouldn't drag a class's average rate down to look worse
-    // than it really is.
-    const ratedRows = studentRows.filter(r => r.totalDays > 0);
-    const avgRate = ratedRows.length
-      ? Math.round(ratedRows.reduce((s, r) => s + r.rate, 0) / ratedRows.length)
-      : 0;
-
-    classes.push({ classCode, totalDays, avgRate, students: studentRows });
-    allStudentRows.push(...studentRows);
-  }
-
-  // Sort classes alphabetically
-  classes.sort((a, b) => a.classCode.localeCompare(b.classCode));
-
-  // Distinct-student count school-wide — the fix for the double-counting bug. A student whose
-  // history legitimately spans more than one classCode (an internal transfer mid-term, or —
-  // pre-fix — a stray non-class record) is still only counted once here.
-  const totalStudents = new Set(allStudentRows.map(r => r.studentId)).size;
-
-  const ratedAllRows = allStudentRows.filter(r => r.totalDays > 0);
-  const overallRate = ratedAllRows.length
-    ? Math.round(ratedAllRows.reduce((s, r) => s + r.rate, 0) / ratedAllRows.length)
-    : 0;
-
-  const chronicAbsentees = allStudentRows
-    .filter(r => r.totalDays > 0 && r.rate < absenteeThreshold)
-    .sort((a, b) => a.rate - b.rate);
-
-  return {
-    schoolId,
-    schoolName,
-    termLabel,
-    startDate,
-    endDate,
+  return buildTermlyReport({
+    schoolId, schoolName, startDate, endDate, termLabel, absenteeThreshold, academicYearId, classCodeFilter,
+    attendance: attSnap.docs.map(d => d.data() as RawAttendanceRecord),
+    registers: regSnap.docs.map(d => d.data() as RawRegister),
+    knownClassCodes,
+    roster,
     generatedAt: new Date().toISOString(),
-    totalStudents,
-    overallRate,
-    classes,
-    chronicAbsentees,
-  };
+  });
 }
 
 // ─── 2. Weekly Summary ─────────────────────────────────────────────────────────
@@ -516,83 +268,12 @@ export async function generateWeeklySummary(
     getKnownClassCodes(schoolId),
   ]);
 
-  let registers = regSnap.docs.map(d => d.data() as RawRegister);
-  if (academicYearId) {
-    registers = registers.filter(r => !r.academicYearId || r.academicYearId === academicYearId);
-  }
-  if (classCodeFilter) {
-    registers = registers.filter(r => r.classCode === classCodeFilter);
-  }
-  if (knownClassCodes) {
-    registers = registers.filter(r => knownClassCodes.has(r.classCode));
-  }
-
-  // Build all 5 weekdays
-  const days: string[] = [];
-  const cursor = ymdToDate(start);
-  for (let i = 0; i < 7; i++) {
-    const ymd = dateToYmd(cursor);
-    const dow = cursor.getDay();
-    if (dow >= 1 && dow <= 5) days.push(ymd); // Mon–Fri only
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  // Group registers by classCode
-  const byClass: Record<string, RawRegister[]> = {};
-  for (const reg of registers) {
-    if (!byClass[reg.classCode]) byClass[reg.classCode] = [];
-    byClass[reg.classCode].push(reg);
-  }
-
-  const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-
-  const classes: WeeklyClassSummary[] = Object.entries(byClass)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([classCode, regs]) => {
-      const regByDate: Record<string, RawRegister> = {};
-      regs.forEach(r => { regByDate[r.date] = r; });
-
-      let totalPresent = 0, totalAbsent = 0;
-      const dayRows: WeeklyDayRow[] = days.map(date => {
-        const reg = regByDate[date];
-        const d   = ymdToDate(date);
-        if (!reg) return {
-          date, dayName: DAY_NAMES[d.getDay()],
-          present: 0, absent: 0, late: 0, excused: 0, total: 0,
-          rate: 0, hasRegister: false,
-        };
-        totalPresent += reg.present;
-        totalAbsent  += reg.absent;
-        const rate = reg.total > 0 ? Math.round((reg.present / reg.total) * 100) : 0;
-        return {
-          date, dayName: DAY_NAMES[d.getDay()],
-          present: reg.present, absent: reg.absent,
-          late: reg.late, excused: reg.excused,
-          total: reg.total, rate, hasRegister: true,
-        };
-      });
-
-      const recordedDays  = dayRows.filter(r => r.hasRegister);
-      const avgRate = recordedDays.length
-        ? Math.round(recordedDays.reduce((s, r) => s + r.rate, 0) / recordedDays.length)
-        : 0;
-
-      return { classCode, days: dayRows, avgRate, totalPresent, totalAbsent };
-    });
-
-  const overallRate = classes.length
-    ? Math.round(classes.reduce((s, c) => s + c.avgRate, 0) / classes.length)
-    : 0;
-
-  return {
-    schoolId,
-    schoolName,
-    weekStart: start,
-    weekEnd:   end,
+  return buildWeeklySummary({
+    schoolId, schoolName, referenceDate, academicYearId, classCodeFilter,
+    registers: regSnap.docs.map(d => d.data() as RawRegister),
+    knownClassCodes,
     generatedAt: new Date().toISOString(),
-    classes,
-    overallRate,
-  };
+  });
 }
 
 // ─── 3. Student Profile Report ─────────────────────────────────────────────────
@@ -733,37 +414,12 @@ export function downloadCsv(filename: string, rows: string[][]): void {
 
 /** Export termly report as CSV */
 export function exportTermlyCsv(report: TermlyReport): void {
-  const rows: string[][] = [
-    [`${report.schoolName} — ${report.termLabel} Attendance Report`],
-    [`Generated: ${new Date(report.generatedAt).toLocaleString('en-KE')}`],
-    [],
-    ['Class', 'Student Name', 'Admission No.', 'Total Days', 'Present', 'Absent', 'Late', 'Excused', 'Rate (%)'],
-    ...report.classes.flatMap(c =>
-      c.students.map(s => [
-        s.classCode, s.studentName, s.admissionNo,
-        String(s.totalDays), String(s.present), String(s.absent),
-        String(s.late), String(s.excused), String(s.rate) + '%',
-      ]),
-    ),
-  ];
-  downloadCsv(`${report.schoolName}_${report.termLabel}_attendance.csv`, rows);
+  downloadCsv(`${report.schoolName}_${report.termLabel}_attendance.csv`, termlyCsvRows(report));
 }
 
 /** Export weekly summary as CSV */
 export function exportWeeklyCsv(report: WeeklySummary): void {
-  const rows: string[][] = [
-    [`${report.schoolName} — Weekly Summary ${report.weekStart} to ${report.weekEnd}`],
-    [],
-    ['Class', 'Day', 'Date', 'Present', 'Absent', 'Late', 'Excused', 'Total', 'Rate (%)'],
-    ...report.classes.flatMap(c =>
-      c.days.map(d => [
-        c.classCode, d.dayName, d.date,
-        String(d.present), String(d.absent), String(d.late),
-        String(d.excused), String(d.total), d.hasRegister ? String(d.rate) + '%' : 'No register',
-      ]),
-    ),
-  ];
-  downloadCsv(`${report.schoolName}_weekly_${report.weekStart}.csv`, rows);
+  downloadCsv(`${report.schoolName}_weekly_${report.weekStart}.csv`, weeklyCsvRows(report));
 }
 
 /** Export student profile as CSV */

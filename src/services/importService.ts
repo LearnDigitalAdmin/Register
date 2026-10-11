@@ -3,12 +3,19 @@ import * as XLSX from 'xlsx';
 import { doc, getDoc, setDoc, writeBatch, collection } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
-  ClassStructure, Student, Enrolment,
-  ImportFieldKey, ImportColumnMapping, ImportRow, ImportRowIssue, ImportScope, ImportSummary,
-  IMPORT_REQUIRED_FIELDS, normaliseAdmissionNo,
+  ImportFieldKey, ImportColumnMapping, ImportRow, ImportScope, ImportSummary,
+  IMPORT_REQUIRED_FIELDS,
 } from '../types';
-import { normalisePhone } from '../utils/phoneValidation';
-import { resolveClassCode } from './classResolver';
+import {
+  autoDetectMapping, buildStudentWrite, rowsFromRecords, validateRows,
+} from '../shared/importValidation';
+import type { ValidationContext } from '../shared/importValidation';
+
+// Column auto-detection, row building, validation and the student/enrolment documents are implemented in
+// `src/shared/importValidation.ts` (shared byte-for-byte with Cloud Functions, so the Samuhia Desk delegate
+// applies the same rules). Re-exported so existing imports from this module keep working.
+export { autoDetectMapping, validateRows };
+export type { ValidationContext };
 
 // ─── Parsing ────────────────────────────────────────────────────────────────
 
@@ -78,100 +85,6 @@ export async function parseImportFile(file: File): Promise<ParsedSheet> {
   throw new Error('Unsupported file type. Please upload a CSV, XLS, or XLSX file.');
 }
 
-// ─── Column auto-detection ─────────────────────────────────────────────────
-
-/** Known header aliases -> canonical field, used to pre-select the likely mapping.
- * Deliberately broad — real files spell these dozens of ways. Kept alias sets disjoint
- * between fields where possible (e.g. "id no" only under nationalId, not admissionNo) so
- * one ambiguous header doesn't get silently claimed by the wrong field. */
-const FIELD_ALIASES: Record<ImportFieldKey, string[]> = {
-  admissionNo: [
-    'admission', 'admission no', 'admission no.', 'admission number', 'admission#', 'admission #',
-    'adm no', 'adm no.', 'adm', 'admno', 'adm number', 'adm num',
-    'reg no', 'reg no.', 'regno', 'registration no', 'registration number',
-    'index no', 'index number', 'student no', 'student number', 'studentno',
-    'pupil no', 'pupil number', 'learner no', 'learner number', 'roll no', 'roll number', 'serial no',
-  ],
-  name: [
-    'student name', 'name', 'full name', 'full names', 'names',
-    'learner', 'learner name', 'learner names', 'pupil name', "pupil's name",
-    'student', "student's name", 'child name', "child's name", "student full name",
-  ],
-  classCode: [
-    'class', 'class code', 'classcode', 'grade', 'form', 'stream class', 'level',
-    'class/stream', 'class stream', 'class & stream', 'class and stream',
-    'current class', 'grade/class', 'class level', 'class name', 'class/grade',
-  ],
-  streamCode: [
-    'stream', 'stream code', 'streamcode', 'section', 'stream name', 'stream only', 'class stream only',
-  ],
-  parentName: [
-    'guardian', 'parent', 'parent name', 'guardian name', 'parent/guardian', 'parent/guardian name',
-    'next of kin', 'nok', 'next of kin name', 'father', 'mother', "parent's name", "guardian's name",
-  ],
-  parentPhone: [
-    'phone', 'mobile', 'parent phone', 'guardian phone', 'contact', 'telephone', 'tel',
-    'phone number', 'mobile number', 'cell', 'contact no', 'contact number',
-    'parent contact', 'guardian contact', 'mobile no', 'tel no', 'sms number', 'sms no', 'phone no',
-  ],
-  parentWhatsApp: [
-    'whatsapp', 'whatsapp no', 'whatsapp number', 'whatsapp contact', 'wa number', 'wa no',
-  ],
-  nationalId: [
-    'national id', 'nationalid', 'id no', 'id number', 'birth cert', 'birth certificate',
-    'birth cert no', 'birth certificate no', 'b/c no', 'bcert', 'national id/birth cert',
-  ],
-  upiNumber: [
-    'upi', 'upi no', 'upi number', 'unique pupil identifier', 'nemis no', 'nemis number',
-    'learner unique no', 'unique learner no', 'uln',
-  ],
-};
-
-function norm(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-}
-
-/** Auto-detects the best-guess mapping from spreadsheet column headers to canonical fields.
- * `customAliases` (school-taught, persisted phrases — see `addCustomAlias`) are checked
- * alongside the built-in library, so a school's own vocabulary gets recognised too.
- *
- * Runs in two global passes rather than per-field: ALL exact-match assignments happen first,
- * across every field, before ANY fuzzy "contains" match is attempted. Otherwise field
- * processing order would decide the outcome — e.g. "Guardian Contact" has an exact alias
- * under parentPhone, but parentName's vague "guardian" alias would fuzzy-claim it first if
- * parentName happened to be checked earlier. Exact should always beat fuzzy, never lose to it. */
-export function autoDetectMapping(
-  columns: string[],
-  customAliases?: Partial<Record<ImportFieldKey, string[]>>,
-): Partial<Record<ImportFieldKey, string>> {
-  const mapping: Partial<Record<ImportFieldKey, string>> = {};
-  const usedColumns = new Set<string>();
-  const fieldKeys = Object.keys(FIELD_ALIASES) as ImportFieldKey[];
-  const aliasesByField = new Map<ImportFieldKey, string[]>(
-    fieldKeys.map(f => [f, [...(customAliases?.[f] || []), ...FIELD_ALIASES[f]].map(norm)]),
-  );
-
-  // Phase 1: exact matches only, across every field.
-  for (const field of fieldKeys) {
-    const aliases = aliasesByField.get(field)!;
-    for (const col of columns) {
-      if (usedColumns.has(col)) continue;
-      if (aliases.includes(norm(col))) { mapping[field] = col; usedColumns.add(col); break; }
-    }
-  }
-  // Phase 2: fuzzy "contains" matches, only for fields still unmapped.
-  for (const field of fieldKeys) {
-    if (mapping[field]) continue;
-    const aliases = aliasesByField.get(field)!;
-    for (const col of columns) {
-      if (usedColumns.has(col)) continue;
-      const n = norm(col);
-      if (aliases.some(a => n.includes(a) || a.includes(n))) { mapping[field] = col; usedColumns.add(col); break; }
-    }
-  }
-  return mapping;
-}
-
 // ─── Saved column mappings (per school) ────────────────────────────────────
 
 export async function getSavedMapping(schoolId: string): Promise<ImportColumnMapping | null> {
@@ -231,110 +144,13 @@ export async function removeCustomAlias(schoolId: string, field: ImportFieldKey,
   return next;
 }
 
-// ─── Row building + validation ─────────────────────────────────────────────
+// ─── Row building ──────────────────────────────────────────────────────────
 
 export function buildRows(
   parsed: ParsedSheet,
   mapping: Partial<Record<ImportFieldKey, string>>,
 ): ImportRow[] {
-  return parsed.rows.map((raw, i) => {
-    const values: Partial<Record<ImportFieldKey, string>> = {};
-    (Object.keys(mapping) as ImportFieldKey[]).forEach(field => {
-      const col = mapping[field];
-      if (col) values[field] = (raw[col] || '').trim();
-    });
-    return { rowIndex: i + 1, values, issues: [], isValid: true };
-  });
-}
-
-export interface ValidationContext {
-  classStructure: ClassStructure | null;
-  existingStudents: Student[];       // already-loaded roster for this school (for dup checks)
-  activeAcademicYearId: string | null;
-  scope: ImportScope;
-  /** Required and enforced whenever scope === 'singleClass' — every valid row gets this
-   * class code regardless of what (if anything) the file itself says about class/stream. */
-  targetClassCode?: string;
-}
-
-/** Validates all rows in place (mutates issues/isValid/resolvedClassCode), including
- * cross-row duplicate detection and — for `wholeSchool` scope — class/stream resolution. */
-export function validateRows(rows: ImportRow[], ctx: ValidationContext): ImportRow[] {
-  const seenAdmissionNos = new Map<string, number>(); // admissionNo -> first rowIndex seen in this file
-  const existingAdmissionNos = new Set(ctx.existingStudents.map(s => normaliseAdmissionNo(s.admissionNo)));
-  const existingNameKeys = new Set(ctx.existingStudents.map(s => `${s.name.trim().toLowerCase()}|${(s.parentPhone || '').trim()}`));
-  const seenNameKeys = new Map<string, number>();
-
-  for (const row of rows) {
-    const issues: ImportRowIssue[] = [];
-    const admissionNo = (row.values.admissionNo || '').trim();
-    const name = (row.values.name || '').trim();
-    const phone = (row.values.parentPhone || '').trim();
-
-    if (!admissionNo) {
-      issues.push({ type: 'missing_admission_no', field: 'admissionNo', message: 'Admission number is missing.' });
-    } else {
-      const key = normaliseAdmissionNo(admissionNo);
-      if (existingAdmissionNos.has(key)) {
-        issues.push({ type: 'duplicate_admission_no', field: 'admissionNo', message: `Admission No. "${admissionNo}" already exists for this school.` });
-      } else if (seenAdmissionNos.has(key)) {
-        issues.push({ type: 'duplicate_admission_no', field: 'admissionNo', message: `Duplicate admission number within the file (also row ${seenAdmissionNos.get(key)}).` });
-      } else {
-        seenAdmissionNos.set(key, row.rowIndex);
-      }
-    }
-
-    if (!name) {
-      issues.push({ type: 'missing_name', field: 'name', message: 'Student name is missing.' });
-    } else {
-      const nameKey = `${name.toLowerCase()}|${phone}`;
-      if (existingNameKeys.has(nameKey)) {
-        issues.push({ type: 'duplicate_student', field: 'name', message: `A student named "${name}" with the same parent phone already exists.` });
-      } else if (seenNameKeys.has(nameKey)) {
-        issues.push({ type: 'duplicate_student', field: 'name', message: `Duplicate student within the file (also row ${seenNameKeys.get(nameKey)}).` });
-      } else {
-        seenNameKeys.set(nameKey, row.rowIndex);
-      }
-    }
-
-    if (phone && !normalisePhone(phone)) {
-      issues.push({ type: 'invalid_phone', field: 'parentPhone', message: `"${phone}" doesn't look like a valid Kenyan phone number.` });
-    }
-
-    if (ctx.scope === 'singleClass') {
-      // Class/stream columns (if mapped at all) are ignored entirely — every valid row goes
-      // into the one class the importer explicitly chose before starting the import.
-      if (!ctx.targetClassCode) {
-        issues.push({ type: 'unknown_class', message: 'No target class was selected for this import.' });
-      } else {
-        row.resolvedClassCode = ctx.targetClassCode;
-      }
-    } else {
-      const rawClass = (row.values.classCode || '').trim();
-      const rawStream = (row.values.streamCode || '').trim();
-      if (!rawClass && !rawStream) {
-        issues.push({ type: 'unknown_class', field: 'classCode', message: 'Class is missing.' });
-      } else {
-        const result = resolveClassCode(rawClass, rawStream, ctx.classStructure);
-        if (result.resolved) {
-          row.resolvedClassCode = result.resolved;
-        } else {
-          const issueType: ImportRowIssue['type'] =
-            result.issue === 'no_level_match' || result.issue === 'ambiguous_level' || result.issue === 'no_class_data'
-              ? 'unknown_class' : 'invalid_stream';
-          issues.push({ type: issueType, field: 'classCode', message: result.message || `"${(rawClass + ' ' + rawStream).trim()}" couldn't be resolved to a class.` });
-        }
-      }
-    }
-
-    if (!ctx.activeAcademicYearId) {
-      issues.push({ type: 'unknown_academic_year', message: 'No active academic year is set for this school.' });
-    }
-
-    row.issues = issues;
-    row.isValid = issues.length === 0;
-  }
-  return rows;
+  return rowsFromRecords(parsed.rows, mapping);
 }
 
 // ─── Import execution ───────────────────────────────────────────────────────
@@ -376,29 +192,12 @@ export async function executeImport(params: ImportParams): Promise<ImportSummary
     try {
       const batch = writeBatch(db);
       for (const row of chunk) {
-        const v = row.values;
         const studentRef = doc(collection(db, 'students'));
-        const now = new Date().toISOString();
-        const classCode = row.resolvedClassCode!;
-        const student: Omit<Student, 'id'> = {
-          name: (v.name || '').trim(),
-          admissionNo: normaliseAdmissionNo(v.admissionNo || ''),
-          classCode,
-          schoolId,
-          parentName: (v.parentName || '').trim(),
-          parentPhone: normalisePhone(v.parentPhone || '') || (v.parentPhone || '').trim(),
-          parentWhatsApp: normalisePhone(v.parentWhatsApp || v.parentPhone || '') || (v.parentWhatsApp || v.parentPhone || '').trim(),
-          createdAt: now,
-          ...(v.nationalId ? { nationalId: v.nationalId.trim() } : {}),
-        };
-        const enrolmentId = `${activeAcademicYearId}_${studentRef.id}`;
-        const enrolment: Enrolment = {
-          id: enrolmentId, studentId: studentRef.id, schoolId,
-          academicYearId: activeAcademicYearId, classCode,
-          status: 'active', createdAt: now,
-        };
-        batch.set(studentRef, { ...student, currentEnrolmentId: enrolmentId });
-        batch.set(doc(db, 'enrolments', enrolmentId), enrolment);
+        const write = buildStudentWrite(row, {
+          schoolId, academicYearId: activeAcademicYearId, studentId: studentRef.id, now: new Date().toISOString(),
+        });
+        batch.set(studentRef, write.student);
+        batch.set(doc(db, 'enrolments', write.enrolmentId), write.enrolment);
       }
       await batch.commit();
       return chunk.length;

@@ -64,6 +64,12 @@ export interface ScheduledMessage {
   linkedHolidayPeriodId?: string;         // set for audienceType === 'holiday_notice'
   holidayNoticeVariant?: HolidayNoticeVariant;
 
+  /** Set only on schedules created through Samuhia Desk's `deskdelegate`. The school admin remains the owner and can edit or stop them. */
+  createdVia?: 'desk';
+  deskAgentCode?: string;
+  deskRequestId?: string;
+  label?: string;
+
   createdAt: string;
   updatedAt: string;
 }

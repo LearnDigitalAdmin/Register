@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import ContactUs from '../components/ContactUs';
+import { FREE_TOKENS_PER_SCHOOL } from '../shared/freeTokens';
 
 export default function Landing() {
   const navigate = useNavigate();
@@ -350,7 +351,7 @@ export default function Landing() {
             {
               name: 'SMS Tokens', price: 'From 0.4', period: 'tokens per SMS part',
               desc: 'Buy tokens when you need to notify parents. No subscription, no commitment.',
-              features: ['100 free tokens on signup','Plain-text SMS delivery','Absence alerts to parents','Broadcast to class or all school','Top up via M-Pesa anytime','Tokens never expire'],
+              features: [`${FREE_TOKENS_PER_SCHOOL} free tokens for every school`,'Plain-text SMS delivery','Absence alerts to parents','Broadcast to class or all school','Top up via M-Pesa anytime','Tokens never expire'],
               highlight: true,
               subDetail: '0.7 tok (≤100) · 0.5 tok (≤300) · 0.4 tok (300+)',
             },
