@@ -86,8 +86,11 @@ Register never calls the desk. The desk reads this project's `desk_requests` col
      --member=serviceAccount:<DESK_SERVICE_ACCOUNT> --role=roles/run.invoker
    ```
    Check it is private: `curl -i https://<deskdelegate-url>` must return **403**.
-3. **Let the desk read `desk_requests`**: grant the same account `roles/datastore.viewer` (read) and write access
-   only if it should write `deskStatus`/`responses` back (`roles/datastore.user`).
+3. **Let the desk read AND update `desk_requests`**: grant the same account `roles/datastore.user`. The sweeper marks each
+   item `status: "pulled"` and writes `deskStatus`/`responses` back, so `roles/datastore.viewer` is not enough (items would
+   stay `new` and be pulled again every 30 minutes). `scripts/desk-iam.sh <project> <desk-project-number>` does steps 2 and 3.
+   Then set `projects.school` and `delegate.school` in the desk project's `desk_config/global` (the script prints both values).
+   Deploy the indexes too: `firebase deploy --only firestore:indexes`. The sweeper's query needs `desk_requests (status, createdAt)`.
 4. **Exports** (`export_data`, `run_report`) upload a CSV under `desk-exports/<school>/<uuid>/` and return a 15-minute signed URL.
    Signing needs the function's service account to hold `roles/iam.serviceAccountTokenCreator` on itself.
    Add a bucket lifecycle rule that deletes objects with prefix `desk-exports/` after 1 day.

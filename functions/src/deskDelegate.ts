@@ -530,7 +530,7 @@ export async function runDelegateAction(req: DelegateRequest): Promise<DelegateR
 
 export const deskdelegate = onRequest(
   {
-    region: REGION, invoker: "private", cors: false, memory: "1GiB", timeoutSeconds: 540, maxInstances: 10,
+    region: REGION, invoker: "private", cors: false, memory: "512MiB", timeoutSeconds: 540, maxInstances: 3,
     secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID],
   },
   async (req, res) => {

@@ -42,10 +42,17 @@ export const createDeskRequest = onCall(
     const id = `${caller.schoolId}_${input.clientToken}`;
     const ref = deskDb.collection(DESK_COLLECTIONS.requests).doc(id);
 
-    // Daily cap per school (single-field query only, so no composite index is needed).
-    const existing = await deskDb.collection(DESK_COLLECTIONS.requests).where("entityCode", "==", caller.schoolId).select("createdAt").get();
+    // Daily cap per school. A count() aggregation bills 1 read per 1,000 index entries (the old code read every request the
+    // school ever made). Needs the (entityCode, createdAt) composite index in firestore.indexes.json.
     const since = Date.now() - DAY_MS;
-    const recent = existing.docs.filter(d => ((d.data() as { createdAt?: number }).createdAt || 0) >= since && d.id !== id).length;
+    const countSnap = await deskDb.collection(DESK_COLLECTIONS.requests)
+      .where("entityCode", "==", caller.schoolId).where("createdAt", ">=", since).count().get();
+    let recent = countSnap.data().count;
+    if (recent >= REQUEST_LIMITS.perDay) {
+      // A retry of a request that is already in the window must not count against itself (same rule as before).
+      const self = await ref.get();
+      if (self.exists && ((self.data() as { createdAt?: number }).createdAt || 0) >= since) recent -= 1;
+    }
     if (recent >= REQUEST_LIMITS.perDay) {
       throw new HttpsError("resource-exhausted", `You've sent ${REQUEST_LIMITS.perDay} requests in the last 24 hours. Please wait for a reply before sending more.`);
     }
@@ -74,11 +81,10 @@ export const listDeskRequests = onCall(
   { region: REGION, memory: "256MiB", timeoutSeconds: 30, maxInstances: 10 },
   async (request: CallableRequest<Record<string, never>>): Promise<{ requests: DeskRequestView[] }> => {
     const caller = await requireSchoolAdmin(request.auth);
-    const snap = await deskDb.collection(DESK_COLLECTIONS.requests).where("entityCode", "==", caller.schoolId).get();
-    const requests = snap.docs
-      .map(d => toRequestView(d.id, d.data() as Partial<OutboxSupportItem>))
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 100);
+    // Newest 100 only (was: every request ever made, sorted in memory). Needs the (entityCode, createdAt desc) index.
+    const snap = await deskDb.collection(DESK_COLLECTIONS.requests)
+      .where("entityCode", "==", caller.schoolId).orderBy("createdAt", "desc").limit(100).get();
+    const requests = snap.docs.map(d => toRequestView(d.id, d.data() as Partial<OutboxSupportItem>));
     return { requests };
   },
 );

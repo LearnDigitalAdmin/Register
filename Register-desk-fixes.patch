@@ -1,0 +1,168 @@
+From d5fb30b7fed1b9e3ec6ac4ea6c5f1352935b0bfc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 12 Oct 2026 10:31:47 +0000
+Subject: [PATCH] fix(desk): link MyRegister to desk properly (indexes, cheaper
+ requests, IAM script) - firestore.indexes.json:
+ desk_requests(status,createdAt) for the desk sweeper, (entityCode,createdAt
+ desc) for list + daily cap - createDeskRequest: daily cap via count()
+ aggregation instead of reading every request ever made - listDeskRequests:
+ orderBy + limit(100) instead of read-all + sort - deskdelegate: 1GiB/10
+ instances -> 512MiB/3 - DEPLOYMENT.md: desk needs roles/datastore.user
+ (viewer leaves items 'new' and re-pulls them every run) -
+ scripts/desk-iam.sh: grants invoker + datastore.user and prints desk_config
+ values
+
+---
+ DEPLOYMENT.md                 |  7 +++++--
+ firestore.indexes.json        | 16 +++++++++++++++
+ functions/src/deskDelegate.ts |  2 +-
+ functions/src/deskRequests.ts | 22 +++++++++++++--------
+ scripts/desk-iam.sh           | 37 +++++++++++++++++++++++++++++++++++
+ 5 files changed, 73 insertions(+), 11 deletions(-)
+ create mode 100755 scripts/desk-iam.sh
+
+diff --git a/DEPLOYMENT.md b/DEPLOYMENT.md
+index 27103fe..8751dd9 100644
+--- a/DEPLOYMENT.md
++++ b/DEPLOYMENT.md
+@@ -86,8 +86,11 @@ Register never calls the desk. The desk reads this project's `desk_requests` col
+      --member=serviceAccount:<DESK_SERVICE_ACCOUNT> --role=roles/run.invoker
+    ```
+    Check it is private: `curl -i https://<deskdelegate-url>` must return **403**.
+-3. **Let the desk read `desk_requests`**: grant the same account `roles/datastore.viewer` (read) and write access
+-   only if it should write `deskStatus`/`responses` back (`roles/datastore.user`).
++3. **Let the desk read AND update `desk_requests`**: grant the same account `roles/datastore.user`. The sweeper marks each
++   item `status: "pulled"` and writes `deskStatus`/`responses` back, so `roles/datastore.viewer` is not enough (items would
++   stay `new` and be pulled again every 30 minutes). `scripts/desk-iam.sh <project> <desk-project-number>` does steps 2 and 3.
++   Then set `projects.school` and `delegate.school` in the desk project's `desk_config/global` (the script prints both values).
++   Deploy the indexes too: `firebase deploy --only firestore:indexes`. The sweeper's query needs `desk_requests (status, createdAt)`.
+ 4. **Exports** (`export_data`, `run_report`) upload a CSV under `desk-exports/<school>/<uuid>/` and return a 15-minute signed URL.
+    Signing needs the function's service account to hold `roles/iam.serviceAccountTokenCreator` on itself.
+    Add a bucket lifecycle rule that deletes objects with prefix `desk-exports/` after 1 day.
+diff --git a/firestore.indexes.json b/firestore.indexes.json
+index 137dfb1..4697cba 100644
+--- a/firestore.indexes.json
++++ b/firestore.indexes.json
+@@ -167,6 +167,22 @@
+         { "fieldPath": "schoolId", "order": "ASCENDING" },
+         { "fieldPath": "performedAt", "order": "DESCENDING" }
+       ]
++    },
++    {
++      "collectionGroup": "desk_requests",
++      "queryScope": "COLLECTION",
++      "fields": [
++        { "fieldPath": "status", "order": "ASCENDING" },
++        { "fieldPath": "createdAt", "order": "ASCENDING" }
++      ]
++    },
++    {
++      "collectionGroup": "desk_requests",
++      "queryScope": "COLLECTION",
++      "fields": [
++        { "fieldPath": "entityCode", "order": "ASCENDING" },
++        { "fieldPath": "createdAt", "order": "DESCENDING" }
++      ]
+     }
+   ],
+   "fieldOverrides": []
+diff --git a/functions/src/deskDelegate.ts b/functions/src/deskDelegate.ts
+index b83bf05..7830f77 100644
+--- a/functions/src/deskDelegate.ts
++++ b/functions/src/deskDelegate.ts
+@@ -530,7 +530,7 @@ export async function runDelegateAction(req: DelegateRequest): Promise<DelegateR
+ 
+ export const deskdelegate = onRequest(
+   {
+-    region: REGION, invoker: "private", cors: false, memory: "1GiB", timeoutSeconds: 540, maxInstances: 10,
++    region: REGION, invoker: "private", cors: false, memory: "512MiB", timeoutSeconds: 540, maxInstances: 3,
+     secrets: [HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID],
+   },
+   async (req, res) => {
+diff --git a/functions/src/deskRequests.ts b/functions/src/deskRequests.ts
+index 5a0e38f..4001f22 100644
+--- a/functions/src/deskRequests.ts
++++ b/functions/src/deskRequests.ts
+@@ -42,10 +42,17 @@ export const createDeskRequest = onCall(
+     const id = `${caller.schoolId}_${input.clientToken}`;
+     const ref = deskDb.collection(DESK_COLLECTIONS.requests).doc(id);
+ 
+-    // Daily cap per school (single-field query only, so no composite index is needed).
+-    const existing = await deskDb.collection(DESK_COLLECTIONS.requests).where("entityCode", "==", caller.schoolId).select("createdAt").get();
++    // Daily cap per school. A count() aggregation bills 1 read per 1,000 index entries (the old code read every request the
++    // school ever made). Needs the (entityCode, createdAt) composite index in firestore.indexes.json.
+     const since = Date.now() - DAY_MS;
+-    const recent = existing.docs.filter(d => ((d.data() as { createdAt?: number }).createdAt || 0) >= since && d.id !== id).length;
++    const countSnap = await deskDb.collection(DESK_COLLECTIONS.requests)
++      .where("entityCode", "==", caller.schoolId).where("createdAt", ">=", since).count().get();
++    let recent = countSnap.data().count;
++    if (recent >= REQUEST_LIMITS.perDay) {
++      // A retry of a request that is already in the window must not count against itself (same rule as before).
++      const self = await ref.get();
++      if (self.exists && ((self.data() as { createdAt?: number }).createdAt || 0) >= since) recent -= 1;
++    }
+     if (recent >= REQUEST_LIMITS.perDay) {
+       throw new HttpsError("resource-exhausted", `You've sent ${REQUEST_LIMITS.perDay} requests in the last 24 hours. Please wait for a reply before sending more.`);
+     }
+@@ -74,11 +81,10 @@ export const listDeskRequests = onCall(
+   { region: REGION, memory: "256MiB", timeoutSeconds: 30, maxInstances: 10 },
+   async (request: CallableRequest<Record<string, never>>): Promise<{ requests: DeskRequestView[] }> => {
+     const caller = await requireSchoolAdmin(request.auth);
+-    const snap = await deskDb.collection(DESK_COLLECTIONS.requests).where("entityCode", "==", caller.schoolId).get();
+-    const requests = snap.docs
+-      .map(d => toRequestView(d.id, d.data() as Partial<OutboxSupportItem>))
+-      .sort((a, b) => b.createdAt - a.createdAt)
+-      .slice(0, 100);
++    // Newest 100 only (was: every request ever made, sorted in memory). Needs the (entityCode, createdAt desc) index.
++    const snap = await deskDb.collection(DESK_COLLECTIONS.requests)
++      .where("entityCode", "==", caller.schoolId).orderBy("createdAt", "desc").limit(100).get();
++    const requests = snap.docs.map(d => toRequestView(d.id, d.data() as Partial<OutboxSupportItem>));
+     return { requests };
+   },
+ );
+diff --git a/scripts/desk-iam.sh b/scripts/desk-iam.sh
+new file mode 100755
+index 0000000..77efee7
+--- /dev/null
++++ b/scripts/desk-iam.sh
+@@ -0,0 +1,37 @@
++#!/usr/bin/env bash
++# Connects MyRegister to Samuhia Desk. Run once per environment by a project owner.
++#
++#   ./scripts/desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region]
++#
++# The desk runs as <DESK_PROJECT_NUMBER>-compute@developer.gserviceaccount.com (the shared CYBER / PAY / Plot Yangu project).
++# It needs two things in THIS project:
++#   1. roles/run.invoker on the private `deskdelegate` function (entity lookup, imports, reports, SMS actions).
++#   2. roles/datastore.user so its 30-minute sweeper can read desk_requests AND write status "pulled" / deskStatus / responses
++#      back. datastore.viewer is NOT enough: the item would stay "new" and be pulled again on every run.
++# It then prints the two values to put in desk_config/global (they are data, not code, so no deploy can set them).
++set -euo pipefail
++
++PROJECT="${1:?usage: desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region]}"
++DESK_NUMBER="${2:?usage: desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region]}"
++REGION="${3:-africa-south1}"
++DESK_SA="${DESK_NUMBER}-compute@developer.gserviceaccount.com"
++
++echo "Granting invoker on deskdelegate (${PROJECT}, ${REGION}) to ${DESK_SA}"
++gcloud run services add-iam-policy-binding deskdelegate \
++  --project="${PROJECT}" --region="${REGION}" \
++  --member="serviceAccount:${DESK_SA}" --role="roles/run.invoker" >/dev/null
++
++echo "Granting Firestore read/write on ${PROJECT} to ${DESK_SA}"
++gcloud projects add-iam-policy-binding "${PROJECT}" \
++  --member="serviceAccount:${DESK_SA}" --role="roles/datastore.user" --condition=None >/dev/null
++
++URL="$(gcloud run services describe deskdelegate --project="${PROJECT}" --region="${REGION}" --format='value(status.url)')"
++echo
++echo "Private check (must print 403):"
++curl -s -o /dev/null -w '%{http_code}\n' -X POST "${URL}" || true
++echo
++echo "Set these in Firestore of the DESK project, document desk_config/global:"
++echo "  projects.school  = ${PROJECT}"
++echo "  delegate.school  = ${URL}"
++echo
++echo "Also deploy the indexes: firebase deploy --only firestore:indexes --project ${PROJECT}"
+-- 
+2.43.0
+
