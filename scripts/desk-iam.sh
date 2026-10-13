@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Connects MyRegister to Samuhia Desk. Run once per environment by a project owner.
 #
-#   ./scripts/desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region]
+#   ./scripts/desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region] [DESK_PROJECT_ID]
+#
+# With the 4th argument it also wires the OTHER direction (desk commission on school SMS top-ups, see below).
 #
 # The desk runs as <DESK_PROJECT_NUMBER>-compute@developer.gserviceaccount.com (the shared CYBER / PAY / Plot Yangu project).
 # It needs two things in THIS project:
@@ -35,3 +37,21 @@ echo "  projects.school  = ${PROJECT}"
 echo "  delegate.school  = ${URL}"
 echo
 echo "Also deploy the indexes: firebase deploy --only firestore:indexes --project ${PROJECT}"
+
+# ── Commission on school SMS top-ups (reverse direction) ─────────────────────────────────────────────────────────────
+# MyRegister's chargeSmsTopUp calls PAY's private `deskSmsCommission` function (desk project) to plan the desk split.
+# It runs as the MyRegister project's default compute service account, which therefore needs roles/run.invoker there.
+DESK_PROJECT_ID="${4:-}"
+if [[ -n "${DESK_PROJECT_ID}" ]]; then
+  REGISTER_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
+  REGISTER_SA="${REGISTER_NUMBER}-compute@developer.gserviceaccount.com"
+  echo
+  echo "Granting ${REGISTER_SA} invoker on deskSmsCommission (${DESK_PROJECT_ID}, ${REGION})"
+  gcloud run services add-iam-policy-binding desksmscommission \
+    --project="${DESK_PROJECT_ID}" --region="${REGION}" \
+    --member="serviceAccount:${REGISTER_SA}" --role="roles/run.invoker" >/dev/null
+  PLAN_URL="$(gcloud run services describe desksmscommission --project="${DESK_PROJECT_ID}" --region="${REGION}" --format='value(status.url)')"
+  echo
+  echo "Set this in functions/.env.${PROJECT} (or .env) and redeploy MyRegister functions. Empty = no desk commission, plain charges:"
+  echo "  DESK_SMS_PLAN_URL=${PLAN_URL}"
+fi

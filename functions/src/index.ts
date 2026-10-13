@@ -2,6 +2,7 @@ import { onCall, CallableRequest, HttpsError } from "firebase-functions/https";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import axios from "axios";
+import { planDeskSms, releaseDeskSms, type DeskSmsPlan } from "./deskCommission";
 import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
 
 export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
@@ -219,9 +220,19 @@ export const chargeSmsTopUp = onCall({
       formattedPhone = '+254' + formattedPhone;
     }
  
+    // The buyer must belong to the school the tokens are bought for. Besides stopping a top-up (and its desk commission)
+    // being attributed to someone else's school, this is what makes `school:<schoolId>` a trustworthy desk entity key.
+    const buyer = await db.collection("users").doc(userId).get();
+    if (!buyer.exists || buyer.get("schoolId") !== schoolId) {
+      throw new HttpsError("permission-denied", "You can only buy SMS tokens for your own school");
+    }
+
     const amountInCents = Math.round(amountKes * 100);
     const reference     = `SMS_${userId}_${Date.now()}`;
- 
+
+    // Desk commission for a school a desk agent owns. Fails open: null means "plain charge", exactly as before.
+    const deskPlan: DeskSmsPlan | null = await planDeskSms({ schoolId, reference, tier, tokens });
+
     const chargePayload = {
       email:    email,   // Paystack requires an email
       amount:   amountInCents,
@@ -231,6 +242,7 @@ export const chargeSmsTopUp = onCall({
         provider: "mpesa",
       },
       reference,
+      ...(deskPlan ? { split_code: deskPlan.splitCode } : {}),
       metadata: {
         chargeType:  "sms_topup",
         targetProject: "project2",            // ← tells webhook to settle in project 2
@@ -246,21 +258,27 @@ export const chargeSmsTopUp = onCall({
  
     console.log("SMS top-up charge request:", JSON.stringify(chargePayload, null, 2));
  
-    const paystackResponse = await axios.post(
-      `${PAYSTACK_API_BASE}/charge`,
-      chargePayload,
-      {
-        headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY.value()}`,
-          "Content-Type": "application/json",
-        },
+    let paystackResponse;
+    try {
+      paystackResponse = await axios.post(
+        `${PAYSTACK_API_BASE}/charge`,
+        chargePayload,
+        {
+          headers: {
+            Authorization: `Bearer ${PAYSTACK_SECRET_KEY.value()}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!paystackResponse.data.status) {
+        throw new HttpsError("internal", `Paystack error: ${paystackResponse.data.message}`);
       }
-    );
- 
-    if (!paystackResponse.data.status) {
-      throw new HttpsError("internal", `Paystack error: ${paystackResponse.data.message}`);
+    } catch (chargeError) {
+      // The charge never started: free a first-purchase reservation taken for it.
+      if (deskPlan) await releaseDeskSms({ schoolId, reference });
+      throw chargeError;
     }
- 
+
     const txData = paystackResponse.data.data;
  
     // Write a pending record to project-2 Firestore
@@ -273,6 +291,8 @@ export const chargeSmsTopUp = onCall({
       tier,
       amountKes,
       phone: formattedPhone,
+      // PAY's webhook reads this at settlement and writes the desk event (only present when a desk agent owns the school).
+      ...(deskPlan ? { deskCommission: deskPlan.commission } : {}),
       status: txData.status || "pending",
       displayText: txData.display_text || null,
       accountReference: txData.account_reference || null,

@@ -91,6 +91,12 @@ Register never calls the desk. The desk reads this project's `desk_requests` col
    stay `new` and be pulled again every 30 minutes). `scripts/desk-iam.sh <project> <desk-project-number>` does steps 2 and 3.
    Then set `projects.school` and `delegate.school` in the desk project's `desk_config/global` (the script prints both values).
    Deploy the indexes too: `firebase deploy --only firestore:indexes`. The sweeper's query needs `desk_requests (status, createdAt)`.
+4. **Desk commission on SMS top-ups** (optional, fails open): `chargeSmsTopUp` asks PAY's private `deskSmsCommission` function
+   to plan the desk split when a desk agent owns the school (`school:<KNEC code>`). Run `scripts/desk-iam.sh` with the 4th
+   argument (the desk project id) to grant MyRegister's service account invoker on that function, then set
+   `DESK_SMS_PLAN_URL` (the script prints it) in `functions/.env.<project>`. Left empty, or on any desk failure, the
+   purchase is charged normally. The buyer's `users/{uid}.schoolId` must equal the school being topped up.
+
 4. **Exports** (`export_data`, `run_report`) upload a CSV under `desk-exports/<school>/<uuid>/` and return a 15-minute signed URL.
    Signing needs the function's service account to hold `roles/iam.serviceAccountTokenCreator` on itself.
    Add a bucket lifecycle rule that deletes objects with prefix `desk-exports/` after 1 day.

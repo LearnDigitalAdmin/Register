@@ -1,0 +1,368 @@
+From c7f12364e6c2b485de51cde87ed1ad141d197c6f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 12 Oct 2026 20:28:42 +0000
+Subject: [PATCH] feat(desk): desk commission on school SMS top-ups
+
+- chargeSmsTopUp: buyer must belong to the school (users/{uid}.schoolId == schoolId); asks PAY's deskSmsCommission for the
+  desk split, attaches split_code, stores deskCommission on the pending doc (PAY's webhook writes the desk event at settlement)
+- fails open: any desk problem = plain charge; reservation released if the charge never starts
+- deskCommission.ts + tests; google-auth-library declared; desk-iam.sh grants the reverse invoker and prints DESK_SMS_PLAN_URL
+- DEPLOYMENT.md step 4. Apply AFTER Register-desk-fixes.patch
+---
+ DEPLOYMENT.md                        |  6 ++
+ functions/package-lock.json          |  9 +--
+ functions/package.json               |  3 +-
+ functions/src/deskCommission.test.ts | 61 ++++++++++++++++++++
+ functions/src/deskCommission.ts      | 84 ++++++++++++++++++++++++++++
+ functions/src/index.ts               | 48 +++++++++++-----
+ scripts/desk-iam.sh                  | 22 +++++++-
+ 7 files changed, 213 insertions(+), 20 deletions(-)
+ create mode 100644 functions/src/deskCommission.test.ts
+ create mode 100644 functions/src/deskCommission.ts
+
+diff --git a/DEPLOYMENT.md b/DEPLOYMENT.md
+index 8751dd9..76e18dc 100644
+--- a/DEPLOYMENT.md
++++ b/DEPLOYMENT.md
+@@ -91,6 +91,12 @@ Register never calls the desk. The desk reads this project's `desk_requests` col
+    stay `new` and be pulled again every 30 minutes). `scripts/desk-iam.sh <project> <desk-project-number>` does steps 2 and 3.
+    Then set `projects.school` and `delegate.school` in the desk project's `desk_config/global` (the script prints both values).
+    Deploy the indexes too: `firebase deploy --only firestore:indexes`. The sweeper's query needs `desk_requests (status, createdAt)`.
++4. **Desk commission on SMS top-ups** (optional, fails open): `chargeSmsTopUp` asks PAY's private `deskSmsCommission` function
++   to plan the desk split when a desk agent owns the school (`school:<KNEC code>`). Run `scripts/desk-iam.sh` with the 4th
++   argument (the desk project id) to grant MyRegister's service account invoker on that function, then set
++   `DESK_SMS_PLAN_URL` (the script prints it) in `functions/.env.<project>`. Left empty, or on any desk failure, the
++   purchase is charged normally. The buyer's `users/{uid}.schoolId` must equal the school being topped up.
++
+ 4. **Exports** (`export_data`, `run_report`) upload a CSV under `desk-exports/<school>/<uuid>/` and return a 15-minute signed URL.
+    Signing needs the function's service account to hold `roles/iam.serviceAccountTokenCreator` on itself.
+    Add a bucket lifecycle rule that deletes objects with prefix `desk-exports/` after 1 day.
+diff --git a/functions/package-lock.json b/functions/package-lock.json
+index 690ff2d..25ffd2e 100644
+--- a/functions/package-lock.json
++++ b/functions/package-lock.json
+@@ -8,7 +8,8 @@
+       "dependencies": {
+         "axios": "^1.16.1",
+         "firebase-admin": "^13.6.0",
+-        "firebase-functions": "^7.0.0"
++        "firebase-functions": "^7.0.0",
++        "google-auth-library": "^10.9.1"
+       },
+       "devDependencies": {
+         "firebase-functions-test": "^3.4.1",
+@@ -3979,9 +3980,9 @@
+       }
+     },
+     "node_modules/google-auth-library": {
+-      "version": "10.6.2",
+-      "resolved": "https://registry.npmjs.org/google-auth-library/-/google-auth-library-10.6.2.tgz",
+-      "integrity": "sha512-e27Z6EThmVNNvtYASwQxose/G57rkRuaRbQyxM2bvYLLX/GqWZ5chWq2EBoUchJbCc57eC9ArzO5wMsEmWftCw==",
++      "version": "10.9.1",
++      "resolved": "https://registry.npmjs.org/google-auth-library/-/google-auth-library-10.9.1.tgz",
++      "integrity": "sha512-i1ydyHrqcIxXkWh/uBmVkzCvIuq5yiK2ATndIe5XxKholrG/MTYP9xGYka4sQhrbIAgGjL2B6NOE7rFaiF3fXw==",
+       "license": "Apache-2.0",
+       "dependencies": {
+         "base64-js": "^1.3.0",
+diff --git a/functions/package.json b/functions/package.json
+index 142c502..87a5512 100644
+--- a/functions/package.json
++++ b/functions/package.json
+@@ -16,7 +16,8 @@
+   "dependencies": {
+     "axios": "^1.16.1",
+     "firebase-admin": "^13.6.0",
+-    "firebase-functions": "^7.0.0"
++    "firebase-functions": "^7.0.0",
++    "google-auth-library": "^10.9.1"
+   },
+   "devDependencies": {
+     "firebase-functions-test": "^3.4.1",
+diff --git a/functions/src/deskCommission.test.ts b/functions/src/deskCommission.test.ts
+new file mode 100644
+index 0000000..4482470
+--- /dev/null
++++ b/functions/src/deskCommission.test.ts
+@@ -0,0 +1,61 @@
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { planDeskSms, releaseDeskSms, deskEntityKey, deskAudience } from "./deskCommission";
++
++const URL_OK = "https://deskSmsCommission-abc-ew.a.run.app";
++const getIdToken = async () => "tok";
++const plan = { schoolId: "12345", reference: "SMS_u1_1", tier: "medium", tokens: 400 };
++const commission = { agentCode: "COG-0001", agentId: "ag1", sharePct: 28.4, rule: "sms_standard", entityKey: "school:12345" };
++const reply = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
++
++test("entity key is school:<schoolId> (the school document id is the KNEC code)", () => {
++  assert.equal(deskEntityKey("12345"), "school:12345");
++});
++
++test("a desk-owned school gets the split and the commission, sent with an ID token and no client-side price", async () => {
++  let seen: { url: string; init: RequestInit } | undefined;
++  const fetchImpl = (async (url: string, init: RequestInit) => { seen = { url, init }; return new Response(JSON.stringify({ applied: true, splitCode: "SPL_x", commission })); }) as unknown as typeof fetch;
++  const out = await planDeskSms(plan, { url: URL_OK, getIdToken, fetchImpl });
++  assert.deepEqual(out, { splitCode: "SPL_x", commission });
++  assert.equal((seen!.init.headers as Record<string, string>).Authorization, "Bearer tok");
++  assert.deepEqual(JSON.parse(seen!.init.body as string), { action: "plan", entityKey: "school:12345", reference: "SMS_u1_1", tier: "medium", tokens: 400 });
++});
++
++test("every failure mode degrades to null (plain charge)", async () => {
++  const opts = { url: URL_OK, getIdToken };
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(200, { applied: false, reason: "no_desk_owner" }) }), null);
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(500, { error: "internal" }) }), null);
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(403, {}) }), null);
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: (async () => { throw new Error("network"); }) as unknown as typeof fetch }), null);
++  assert.equal(await planDeskSms(plan, { ...opts, getIdToken: async () => { throw new Error("no creds"); }, fetchImpl: reply(200, {}) }), null);
++  assert.equal(await planDeskSms(plan, { url: "", getIdToken, fetchImpl: reply(200, {}) }), null, "not configured");
++  assert.equal(await planDeskSms(plan, { url: "http://insecure.example/x", getIdToken, fetchImpl: reply(200, {}) }), null, "https only");
++});
++
++test("a malformed or mismatched answer is never trusted", async () => {
++  const opts = { url: URL_OK, getIdToken };
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(200, { applied: true, splitCode: "ACCT_x", commission }) }), null, "not a split code");
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(200, { applied: true, splitCode: "SPL_x", commission: { ...commission, entityKey: "school:99999" } }) }), null, "commission for another school");
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(200, { applied: true, splitCode: "SPL_x", commission: { ...commission, sharePct: "28" } }) }), null);
++  assert.equal(await planDeskSms(plan, { ...opts, fetchImpl: reply(200, [1]) }), null);
++});
++
++test("a slow desk is abandoned after the timeout", async () => {
++  const slow = ((_u: string, init: RequestInit) => new Promise((_r, rej) => init.signal!.addEventListener("abort", () => rej(new Error("aborted"))))) as unknown as typeof fetch;
++  const t0 = Date.now();
++  assert.equal(await planDeskSms(plan, { url: URL_OK, getIdToken, fetchImpl: slow, timeoutMs: 40 }), null);
++  assert.ok(Date.now() - t0 < 1000);
++});
++
++test("release sends the release action and never throws", async () => {
++  let body = "";
++  const ok = (async (_u: string, init: RequestInit) => { body = init.body as string; return new Response("{}"); }) as unknown as typeof fetch;
++  await releaseDeskSms({ schoolId: "12345", reference: "SMS_u1_1" }, { url: URL_OK, getIdToken, fetchImpl: ok });
++  assert.deepEqual(JSON.parse(body), { action: "release", entityKey: "school:12345", reference: "SMS_u1_1" });
++  await releaseDeskSms({ schoolId: "12345", reference: "SMS_u1_1" }, { url: URL_OK, getIdToken, fetchImpl: (async () => { throw new Error("x"); }) as unknown as typeof fetch });
++});
++
++test("ID-token audience: run.app uses the origin, cloudfunctions.net the full URL", () => {
++  assert.equal(deskAudience("https://svc-abc-ew.a.run.app/path?x=1"), "https://svc-abc-ew.a.run.app");
++  assert.equal(deskAudience("https://africa-south1-p.cloudfunctions.net/fn"), "https://africa-south1-p.cloudfunctions.net/fn");
++});
+diff --git a/functions/src/deskCommission.ts b/functions/src/deskCommission.ts
+new file mode 100644
+index 0000000..02f438a
+--- /dev/null
++++ b/functions/src/deskCommission.ts
+@@ -0,0 +1,84 @@
++// Asks PAY (the shared desk project) to plan the desk part of a school's SMS top-up, so a desk agent who owns the school
++// earns their commission on MyRegister purchases. PAY does the owner lookup, the first-purchase reservation and the
++// Paystack split; Register only attaches the returned split to its own charge and stores the commission on the pending
++// document, which PAY's webhook reads at settlement to write the desk event.
++//
++// FAIL OPEN: every failure (not configured, timeout, 4xx/5xx, malformed answer) returns null and the purchase proceeds
++// as a plain charge. A desk problem must never stop a school from buying tokens.
++import { GoogleAuth } from "google-auth-library";
++import { defineString } from "firebase-functions/params";
++
++/** Full URL of PAY's private `deskSmsCommission` function. Empty = feature off (plain charges). */
++export const DESK_SMS_PLAN_URL = defineString("DESK_SMS_PLAN_URL", { default: "" });
++
++export interface DeskSmsPlan { splitCode: string; commission: Record<string, unknown> }
++
++export interface DeskCallOptions {
++  url?: string;
++  /** Test override. Default: Google ID token for the audience, via the runtime service account. */
++  getIdToken?: (audience: string) => Promise<string>;
++  fetchImpl?: typeof fetch;
++  timeoutMs?: number;
++}
++
++/** The school document id IS the KNEC code, so the desk entity key is simply school:<schoolId>. */
++export const deskEntityKey = (schoolId: string): string => `school:${schoolId}`;
++
++/** *.run.app uses the service origin as ID-token audience; a cloudfunctions.net URL uses the full URL. */
++export function deskAudience(url: string): string {
++  const u = new URL(url);
++  return u.hostname.endsWith(".run.app") ? u.origin : `${u.origin}${u.pathname}`;
++}
++
++const auth = new GoogleAuth();
++async function defaultIdToken(audience: string): Promise<string> {
++  const client = await auth.getIdTokenClient(audience);
++  return client.idTokenProvider.fetchIdToken(audience);
++}
++
++function configuredUrl(o: DeskCallOptions): string {
++  if (o.url !== undefined) return o.url.trim();
++  try { return DESK_SMS_PLAN_URL.value().trim(); } catch { return ""; }
++}
++
++async function call(body: Record<string, unknown>, o: DeskCallOptions): Promise<Record<string, unknown> | null> {
++  const url = configuredUrl(o);
++  if (!url) return null;
++  const ctrl = new AbortController();
++  const timer = setTimeout(() => ctrl.abort(), o.timeoutMs ?? 8_000);
++  try {
++    const u = new URL(url);
++    if (u.protocol !== "https:") return null;
++    const token = await (o.getIdToken ?? defaultIdToken)(deskAudience(url));
++    const res = await (o.fetchImpl ?? fetch)(url, {
++      method: "POST", signal: ctrl.signal,
++      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
++      body: JSON.stringify(body),
++    });
++    if (!res.ok) { console.warn("desk sms call refused:", res.status); return null; }
++    const json = await res.json();
++    return typeof json === "object" && json !== null && !Array.isArray(json) ? (json as Record<string, unknown>) : null;
++  } catch (err) {
++    console.warn("desk sms call failed:", (err as Error)?.message);
++    return null;
++  } finally {
++    clearTimeout(timer);
++  }
++}
++
++/** A desk split for this purchase, or null for "charge normally". */
++export async function planDeskSms(
++  p: { schoolId: string; reference: string; tier: string; tokens: number }, o: DeskCallOptions = {},
++): Promise<DeskSmsPlan | null> {
++  const out = await call({ action: "plan", entityKey: deskEntityKey(p.schoolId), reference: p.reference, tier: p.tier, tokens: p.tokens }, o);
++  if (!out || out.applied !== true) return null;
++  const c = out.commission as Record<string, unknown> | undefined;
++  if (typeof out.splitCode !== "string" || !out.splitCode.startsWith("SPL_")) return null;
++  if (!c || typeof c !== "object" || c.entityKey !== deskEntityKey(p.schoolId) || typeof c.sharePct !== "number") return null;
++  return { splitCode: out.splitCode, commission: { ...c } };
++}
++
++/** The charge never started: free the first-purchase reservation PAY took for it. Best effort (it also expires by itself). */
++export async function releaseDeskSms(p: { schoolId: string; reference: string }, o: DeskCallOptions = {}): Promise<void> {
++  await call({ action: "release", entityKey: deskEntityKey(p.schoolId), reference: p.reference }, o);
++}
+diff --git a/functions/src/index.ts b/functions/src/index.ts
+index 64d52de..990a560 100644
+--- a/functions/src/index.ts
++++ b/functions/src/index.ts
+@@ -2,6 +2,7 @@ import { onCall, CallableRequest, HttpsError } from "firebase-functions/https";
+ import { defineSecret } from "firebase-functions/params";
+ import * as admin from "firebase-admin";
+ import axios from "axios";
++import { planDeskSms, releaseDeskSms, type DeskSmsPlan } from "./deskCommission";
+ import { sendHostPinnacleSms, normalizeSmsPhone as sharedNormalizeSmsPhone, sanitizeSmsText as sharedSanitizeSmsText, containsLink as sharedContainsLink, HP_SMS_USERID, HP_SMS_PASSWORD, HP_SMS_APIKEY, HP_SMS_SENDERID } from "./smsSender";
+ 
+ export { registerReminder10am, registerFinaliseUnmarkedNoon } from "./registerReminders";
+@@ -219,9 +220,19 @@ export const chargeSmsTopUp = onCall({
+       formattedPhone = '+254' + formattedPhone;
+     }
+  
++    // The buyer must belong to the school the tokens are bought for. Besides stopping a top-up (and its desk commission)
++    // being attributed to someone else's school, this is what makes `school:<schoolId>` a trustworthy desk entity key.
++    const buyer = await db.collection("users").doc(userId).get();
++    if (!buyer.exists || buyer.get("schoolId") !== schoolId) {
++      throw new HttpsError("permission-denied", "You can only buy SMS tokens for your own school");
++    }
++
+     const amountInCents = Math.round(amountKes * 100);
+     const reference     = `SMS_${userId}_${Date.now()}`;
+- 
++
++    // Desk commission for a school a desk agent owns. Fails open: null means "plain charge", exactly as before.
++    const deskPlan: DeskSmsPlan | null = await planDeskSms({ schoolId, reference, tier, tokens });
++
+     const chargePayload = {
+       email:    email,   // Paystack requires an email
+       amount:   amountInCents,
+@@ -231,6 +242,7 @@ export const chargeSmsTopUp = onCall({
+         provider: "mpesa",
+       },
+       reference,
++      ...(deskPlan ? { split_code: deskPlan.splitCode } : {}),
+       metadata: {
+         chargeType:  "sms_topup",
+         targetProject: "project2",            // ← tells webhook to settle in project 2
+@@ -246,21 +258,27 @@ export const chargeSmsTopUp = onCall({
+  
+     console.log("SMS top-up charge request:", JSON.stringify(chargePayload, null, 2));
+  
+-    const paystackResponse = await axios.post(
+-      `${PAYSTACK_API_BASE}/charge`,
+-      chargePayload,
+-      {
+-        headers: {
+-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY.value()}`,
+-          "Content-Type": "application/json",
+-        },
++    let paystackResponse;
++    try {
++      paystackResponse = await axios.post(
++        `${PAYSTACK_API_BASE}/charge`,
++        chargePayload,
++        {
++          headers: {
++            Authorization: `Bearer ${PAYSTACK_SECRET_KEY.value()}`,
++            "Content-Type": "application/json",
++          },
++        }
++      );
++      if (!paystackResponse.data.status) {
++        throw new HttpsError("internal", `Paystack error: ${paystackResponse.data.message}`);
+       }
+-    );
+- 
+-    if (!paystackResponse.data.status) {
+-      throw new HttpsError("internal", `Paystack error: ${paystackResponse.data.message}`);
++    } catch (chargeError) {
++      // The charge never started: free a first-purchase reservation taken for it.
++      if (deskPlan) await releaseDeskSms({ schoolId, reference });
++      throw chargeError;
+     }
+- 
++
+     const txData = paystackResponse.data.data;
+  
+     // Write a pending record to project-2 Firestore
+@@ -273,6 +291,8 @@ export const chargeSmsTopUp = onCall({
+       tier,
+       amountKes,
+       phone: formattedPhone,
++      // PAY's webhook reads this at settlement and writes the desk event (only present when a desk agent owns the school).
++      ...(deskPlan ? { deskCommission: deskPlan.commission } : {}),
+       status: txData.status || "pending",
+       displayText: txData.display_text || null,
+       accountReference: txData.account_reference || null,
+diff --git a/scripts/desk-iam.sh b/scripts/desk-iam.sh
+index 77efee7..7b7dddf 100755
+--- a/scripts/desk-iam.sh
++++ b/scripts/desk-iam.sh
+@@ -1,7 +1,9 @@
+ #!/usr/bin/env bash
+ # Connects MyRegister to Samuhia Desk. Run once per environment by a project owner.
+ #
+-#   ./scripts/desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region]
++#   ./scripts/desk-iam.sh <REGISTER_PROJECT_ID> <DESK_PROJECT_NUMBER> [region] [DESK_PROJECT_ID]
++#
++# With the 4th argument it also wires the OTHER direction (desk commission on school SMS top-ups, see below).
+ #
+ # The desk runs as <DESK_PROJECT_NUMBER>-compute@developer.gserviceaccount.com (the shared CYBER / PAY / Plot Yangu project).
+ # It needs two things in THIS project:
+@@ -35,3 +37,21 @@ echo "  projects.school  = ${PROJECT}"
+ echo "  delegate.school  = ${URL}"
+ echo
+ echo "Also deploy the indexes: firebase deploy --only firestore:indexes --project ${PROJECT}"
++
++# ── Commission on school SMS top-ups (reverse direction) ─────────────────────────────────────────────────────────────
++# MyRegister's chargeSmsTopUp calls PAY's private `deskSmsCommission` function (desk project) to plan the desk split.
++# It runs as the MyRegister project's default compute service account, which therefore needs roles/run.invoker there.
++DESK_PROJECT_ID="${4:-}"
++if [[ -n "${DESK_PROJECT_ID}" ]]; then
++  REGISTER_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
++  REGISTER_SA="${REGISTER_NUMBER}-compute@developer.gserviceaccount.com"
++  echo
++  echo "Granting ${REGISTER_SA} invoker on deskSmsCommission (${DESK_PROJECT_ID}, ${REGION})"
++  gcloud run services add-iam-policy-binding desksmscommission \
++    --project="${DESK_PROJECT_ID}" --region="${REGION}" \
++    --member="serviceAccount:${REGISTER_SA}" --role="roles/run.invoker" >/dev/null
++  PLAN_URL="$(gcloud run services describe desksmscommission --project="${DESK_PROJECT_ID}" --region="${REGION}" --format='value(status.url)')"
++  echo
++  echo "Set this in functions/.env.${PROJECT} (or .env) and redeploy MyRegister functions. Empty = no desk commission, plain charges:"
++  echo "  DESK_SMS_PLAN_URL=${PLAN_URL}"
++fi
+-- 
+2.43.0
+
